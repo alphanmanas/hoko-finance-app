@@ -1,117 +1,120 @@
 import streamlit as st
-import math
+import pandas as pd
 
-st.set_page_config(page_title="HOKO Mobility Financial Copilot", layout="wide")
+st.set_page_config(layout="wide")
 
-st.title("HOKO Mobility Financial Copilot")
+st.title("HOKO Mobility Financial Copilot v2")
 
-# -------------------------
-# SIDEBAR INPUTS
-# -------------------------
+# ---------------------
+# PARAMETERS
+# ---------------------
 
-st.sidebar.header("Parametreler")
+daily_km = st.sidebar.number_input("Km/day", value=150)
+wh_per_km = st.sidebar.number_input("Wh/km", value=40)
+sell_price = st.sidebar.number_input("Sell price (TL/kWh)", value=15.0)
+buy_price = st.sidebar.number_input("Buy price (TL/kWh)", value=3.5)
+company_share = st.sidebar.slider("Company share", 0.0, 1.0, 0.8)
 
-motors = st.sidebar.number_input("Motor Sayısı", value=6000)
-daily_km = st.sidebar.number_input("Km / Gün", value=150)
-wh_per_km = st.sidebar.number_input("Wh / km", value=40)
-
-sell_price = st.sidebar.number_input("Satış Fiyatı (TL/kWh)", value=15.0)
-buy_price = st.sidebar.number_input("Elektrik Alış (TL/kWh)", value=3.5)
-
-company_share = st.sidebar.slider("Bizim Pay (%)", 0, 100, 80) / 100
-
-cycle = st.sidebar.number_input("Cycle (CS24)", value=2.0)
+cycle = st.sidebar.number_input("Cycle", value=2.0)
 
 battery_kwh = 3.24
 slots = 24
 soc = 0.85
 
-usd_try = st.sidebar.number_input("USD/TRY", value=45.0)
-cs_cost_usd = st.sidebar.number_input("CS24 Donanım ($)", value=5000.0)
-battery_cost = st.sidebar.number_input("Battery $/kWh", value=200.0)
+# ---------------------
+# SALES SCHEDULE
+# ---------------------
 
-opex = st.sidebar.number_input("Yıllık OPEX (TL)", value=20000)
+sales = {}
 
-motor_profit = st.sidebar.number_input("Motor Brüt Kâr (TL)", value=80000)
+for m in range(1, 6):
+    sales[m] = 0
 
-# -------------------------
-# HESAPLAR
-# -------------------------
+sales[6] = 2000
+sales[7] = 2500
+sales[8] = 3000
+sales[9] = 3000
+sales[10] = 3250
+sales[11] = 3250
+sales[12] = 3250
 
-# Motor enerji
+for m in range(13, 19):
+    sales[m] = 3500
+
+for m in range(19, 49):
+    sales[m] = 4000
+
+# ---------------------
+# CALCULATION
+# ---------------------
+
+data = []
+
+active = 0
+
 daily_kwh_per_motor = daily_km * wh_per_km / 1000
-total_daily_kwh = motors * daily_kwh_per_motor
-annual_kwh = total_daily_kwh * 365
-
-# CS24 kapasite
 cs_capacity = slots * battery_kwh
-usable_per_cycle = cs_capacity * soc
-daily_cs_kwh = usable_per_cycle * cycle
+usable = cs_capacity * soc
+daily_cs_kwh = usable * cycle
 
-cs_needed = math.ceil(total_daily_kwh / daily_cs_kwh)
+margin = (sell_price - buy_price) * company_share
 
-# Marj
-margin = sell_price - buy_price
-company_margin = margin * company_share
+for m in range(1, 49):
 
-# Gelir
-annual_energy_profit = annual_kwh * company_margin
+    sold = sales[m]
+    active += sold
 
-# CapEx
-battery_total_usd = cs_capacity * battery_cost
-cs_total_try = (cs_cost_usd + battery_total_usd) * usd_try
+    daily_kwh = active * daily_kwh_per_motor
+    monthly_kwh = daily_kwh * 30
 
-down_payment = cs_total_try * 0.25
-our_investment = cs_total_try * 0.75
+    revenue = monthly_kwh * sell_price
+    cost = monthly_kwh * buy_price
+    profit = monthly_kwh * margin
 
-# CS gelir
-annual_cs_kwh = daily_cs_kwh * 365
-cs_profit = annual_cs_kwh * company_margin
+    cs_needed = int(daily_kwh / daily_cs_kwh) + 1
 
-cs_net = cs_profit - opex
+    data.append([
+        m, sold, active,
+        daily_kwh, monthly_kwh,
+        revenue, cost, profit,
+        cs_needed
+    ])
 
-roi = cs_net / our_investment
-payback = our_investment / cs_net
+df = pd.DataFrame(data, columns=[
+    "Month", "Sold", "Active",
+    "Daily kWh", "Monthly kWh",
+    "Revenue", "Cost", "Profit",
+    "CS24 Needed"
+])
 
-# IRR approx
-irr = roi * 0.9  # basit approx
+# ---------------------
+# TABS
+# ---------------------
 
-# Motor gelir
-motor_total = motors * motor_profit
+tab1, tab2 = st.tabs(["Dashboard", "Cash Flow"])
 
-# TOPLAM
-total_profit = motor_total + annual_energy_profit
+# ---------------------
+# DASHBOARD
+# ---------------------
 
-# -------------------------
-# OUTPUT
-# -------------------------
+with tab1:
 
-col1, col2, col3, col4 = st.columns(4)
+    st.subheader("Key Metrics")
 
-col1.metric("CS24 Sayısı", cs_needed)
-col2.metric("Yıllık kWh", f"{annual_kwh:,.0f}")
-col3.metric("Enerji Kârı", f"₺{annual_energy_profit:,.0f}")
-col4.metric("Toplam Kâr", f"₺{total_profit:,.0f}")
+    col1, col2, col3 = st.columns(3)
 
-st.divider()
+    col1.metric("Active Motors (Final)", df["Active"].iloc[-1])
+    col2.metric("Monthly kWh (Final)", f"{df['Monthly kWh'].iloc[-1]:,.0f}")
+    col3.metric("Monthly Profit (Final)", f"₺{df['Profit'].iloc[-1]:,.0f}")
 
-st.subheader("CS24 Ekonomi")
+# ---------------------
+# CASH FLOW
+# ---------------------
 
-col1, col2, col3 = st.columns(3)
+with tab2:
 
-col1.metric("CS24 ROI", f"{roi*100:.1f}%")
-col2.metric("Payback (yıl)", f"{payback:.2f}")
-col3.metric("IRR (approx)", f"{irr*100:.1f}%")
+    st.subheader("Monthly Cash Flow")
 
-st.divider()
+    st.dataframe(df)
 
-st.subheader("Detaylar")
-
-st.write(f"Günlük enerji: {total_daily_kwh:,.0f} kWh")
-st.write(f"CS24 başı günlük enerji: {daily_cs_kwh:,.0f} kWh")
-st.write(f"Toplam CS24: {cs_needed}")
-
-st.write(f"CS24 yatırım: ₺{cs_total_try:,.0f}")
-st.write(f"Bizim yatırım: ₺{our_investment:,.0f}")
-
-st.write(f"CS24 yıllık net: ₺{cs_net:,.0f}")
+    st.line_chart(df.set_index("Month")[["Profit"]])
