@@ -4,7 +4,7 @@ from io import BytesIO
 import pandas as pd
 import streamlit as st
 
-st.set_page_config(page_title="HOKO Mobility Financial Copilot v04.1", layout="wide")
+st.set_page_config(page_title="HOKO Mobility Financial Copilot v04.2", layout="wide")
 
 
 # =========================================================
@@ -27,6 +27,10 @@ def fmt_try(x):
 
 def fmt_pct(x):
     return f"%{up_int(x)}"
+
+
+def fmt_plain_int(x):
+    return str(up_int(x))
 
 
 def safe_float(x, default=0.0):
@@ -70,6 +74,8 @@ def make_template_excel():
             "Battery Life (Years)",
             "Tax Rate %",
             "Wh Per Km",
+            "Active User % (Courier E-Scooter)",
+            "Active User % (Commuter E-Scooter)",
             "Heavy Duty User % (Courier Scooter)",
             "Standard Duty User % (Courier Scooter)",
             "Light Duty User % (Courier Scooter)",
@@ -79,7 +85,7 @@ def make_template_excel():
         ],
         "Value": [
             5, 3, 10, 3.5, 15, 40, 24, 3.24, 85, 2, 5000, 200, 25, 8, 20, 40,
-            40, 40, 20, 180, 140, 100
+            70, 30, 40, 40, 20, 180, 140, 100
         ]
     })
 
@@ -221,10 +227,10 @@ def get_macro_value(macro_df, year, half, field_base):
 
 
 # =========================================================
-# PAGE HEADER
+# HEADER
 # =========================================================
 
-st.title("HOKO Mobility Financial Copilot v04.1")
+st.title("HOKO Mobility Financial Copilot v04.2")
 st.caption("Excel-Driven, Multi-Product, Monthly Financial Model")
 
 with st.expander("Excel Upload Instructions", expanded=True):
@@ -241,19 +247,12 @@ Required sheets:
 7. BoM List
 8. Product CapEx
 9. Cash Flow Statement
-
-Rules:
-1. Dashboard is for outputs and a few critical manual overrides only
-2. Assumptions contain both Editable and Calculated rows in one table
-3. Display values are rounded up
-4. Numbers use comma-separated thousands
-5. Percentages are shown as %45 format
 """)
 
 st.download_button(
     "Download Template Excel",
     data=make_template_excel(),
-    file_name="HOKO_BP_Template_v04.xlsx",
+    file_name="HOKO_BP_Template_v04_2.xlsx",
     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 )
 
@@ -273,7 +272,6 @@ personnel_rules_df = None
 bom_df = None
 product_capex_df = None
 cashflow_sheet_df = None
-excel_ok = False
 
 if uploaded_file is not None:
     try:
@@ -302,71 +300,108 @@ if uploaded_file is not None:
             bom_df = pd.read_excel(xls, "BoM List")
             product_capex_df = pd.read_excel(xls, "Product CapEx")
             cashflow_sheet_df = pd.read_excel(xls, "Cash Flow Statement")
-            excel_ok = True
             st.success("Excel uploaded successfully.")
     except Exception as e:
         st.error(f"Excel could not be read: {e}")
 
 
 # =========================================================
-# MANUAL OVERRIDES ON DASHBOARD
+# DEFAULTS FROM EXCEL / FALLBACK
 # =========================================================
 
-st.markdown("### Dashboard Manual Overrides")
+base_grace_period_months = safe_int(get_param_value(assumptions_df, "Grace Period (Months)", 5))
+base_raw_material_required_before_months = safe_int(get_param_value(assumptions_df, "Raw Material Required Before (Months)", 3))
+base_stock_in_rate_pct = safe_float(get_param_value(assumptions_df, "Stock-In Rate %", 10))
+base_energy_buy_price_2025 = safe_float(get_param_value(assumptions_df, "Energy Buy Price (2025)", 3.5))
+base_energy_sell_price_2025 = safe_float(get_param_value(assumptions_df, "Energy Sell Price (2025)", 15))
+base_newco_share_pct = safe_float(get_param_value(assumptions_df, "NewCo Share %", 40))
+base_battery_slots_per_cs24 = safe_int(get_param_value(assumptions_df, "Battery Slots Per CS24", 24))
+base_battery_kwh_each = safe_float(get_param_value(assumptions_df, "Battery kWh Each", 3.24))
+base_delivery_soc_pct = safe_float(get_param_value(assumptions_df, "Delivery SoC %", 85))
+base_charging_cycle_per_cs24 = safe_float(get_param_value(assumptions_df, "Charging Cycle Per CS24", 2))
+base_cs24_hardware_installation_usd = safe_float(get_param_value(assumptions_df, "CS24 Hardware & Installation USD", 5000))
+base_battery_usd_per_kwh = safe_float(get_param_value(assumptions_df, "Battery USD Per kWh", 200))
+base_down_payment_pct = safe_float(get_param_value(assumptions_df, "Down Payment %", 25))
+base_battery_life_years = safe_int(get_param_value(assumptions_df, "Battery Life (Years)", 8))
+base_tax_rate_pct = safe_float(get_param_value(assumptions_df, "Tax Rate %", 20))
+base_wh_per_km = safe_float(get_param_value(assumptions_df, "Wh Per Km", 40))
 
-d1, d2 = st.columns(2)
+base_active_user_pct_courier = safe_float(get_param_value(assumptions_df, "Active User % (Courier E-Scooter)", 70))
+base_active_user_pct_commuter = safe_float(get_param_value(assumptions_df, "Active User % (Commuter E-Scooter)", 30))
+base_heavy_duty_user_pct = safe_float(get_param_value(assumptions_df, "Heavy Duty User % (Courier Scooter)", 40))
+base_standard_duty_user_pct = safe_float(get_param_value(assumptions_df, "Standard Duty User % (Courier Scooter)", 40))
+base_light_duty_user_pct = safe_float(get_param_value(assumptions_df, "Light Duty User % (Courier Scooter)", 20))
+base_heavy_duty_km_per_day = safe_float(get_param_value(assumptions_df, "Heavy Duty Km Per Day", 180))
+base_standard_duty_km_per_day = safe_float(get_param_value(assumptions_df, "Standard Duty Km Per Day", 140))
+base_light_duty_km_per_day = safe_float(get_param_value(assumptions_df, "Light Duty Km Per Day", 100))
 
-with d1:
-    override_active_user_pct_courier = st.number_input(
-        "Active User % (Courier E-Scooter)",
-        min_value=0, max_value=100, value=70, step=1
+
+# =========================================================
+# ASSUMPTIONS EDITORS
+# =========================================================
+
+st.markdown("## Assumptions")
+
+with st.expander("Editable Assumptions", expanded=True):
+    e1, e2, e3 = st.columns(3)
+
+    with e1:
+        grace_period_months = st.number_input("Grace Period (Months)", min_value=0, value=base_grace_period_months, step=1)
+        raw_material_required_before_months = st.number_input("Raw Material Required Before (Months)", min_value=0, value=base_raw_material_required_before_months, step=1)
+        stock_in_rate_pct = st.number_input("Stock-In Rate %", min_value=0, max_value=100, value=up_int(base_stock_in_rate_pct), step=1)
+        energy_buy_price_2025 = st.number_input("Energy Buy Price (2025)", min_value=0, value=up_int(base_energy_buy_price_2025), step=1)
+        energy_sell_price_2025 = st.number_input("Energy Sell Price (2025)", min_value=0, value=up_int(base_energy_sell_price_2025), step=1)
+
+    with e2:
+        newco_share_pct = st.number_input("NewCo Share %", min_value=0, max_value=100, value=up_int(base_newco_share_pct), step=1)
+        battery_slots_per_cs24 = st.number_input("Battery Slots Per CS24", min_value=1, value=base_battery_slots_per_cs24, step=1)
+        battery_kwh_each = st.number_input("Battery kWh Each", min_value=0, value=up_int(base_battery_kwh_each), step=1)
+        delivery_soc_pct = st.number_input("Delivery SoC %", min_value=0, max_value=100, value=up_int(base_delivery_soc_pct), step=1)
+        charging_cycle_per_cs24 = st.number_input("Charging Cycle Per CS24", min_value=0, value=up_int(base_charging_cycle_per_cs24), step=1)
+
+    with e3:
+        cs24_hardware_installation_usd = st.number_input("CS24 Hardware & Installation USD", min_value=0, value=up_int(base_cs24_hardware_installation_usd), step=100)
+        battery_usd_per_kwh = st.number_input("Battery USD Per kWh", min_value=0, value=up_int(base_battery_usd_per_kwh), step=10)
+        down_payment_pct = st.number_input("Down Payment %", min_value=0, max_value=100, value=up_int(base_down_payment_pct), step=1)
+        battery_life_years = st.number_input("Battery Life (Years)", min_value=1, value=base_battery_life_years, step=1)
+        tax_rate_pct = st.number_input("Tax Rate %", min_value=0, max_value=100, value=up_int(base_tax_rate_pct), step=1)
+        wh_per_km = st.number_input("Wh Per Km", min_value=0, value=up_int(base_wh_per_km), step=1)
+
+with st.expander("Override Assumptions", expanded=True):
+    o1, o2 = st.columns(2)
+
+    with o1:
+        active_user_pct_courier_avg = st.text_input("Active User % (Courier E-Scooter)", value=str(up_int(base_active_user_pct_courier)))
+        active_user_pct_commuter_avg = st.text_input("Active User % (Commuter E-Scooter)", value=str(up_int(base_active_user_pct_commuter)))
+
+    with o2:
+        heavy_duty_user_pct = st.text_input("Heavy Duty User % (Courier Scooter)", value=str(up_int(base_heavy_duty_user_pct)))
+        standard_duty_user_pct = st.text_input("Standard Duty User % (Courier Scooter)", value=str(up_int(base_standard_duty_user_pct)))
+        light_duty_user_pct = st.text_input("Light Duty User % (Courier Scooter)", value=str(up_int(base_light_duty_user_pct)))
+        heavy_duty_km_per_day = st.text_input("Heavy Duty Km Per Day", value=str(up_int(base_heavy_duty_km_per_day)))
+        standard_duty_km_per_day = st.text_input("Standard Duty Km Per Day", value=str(up_int(base_standard_duty_km_per_day)))
+        light_duty_km_per_day = st.text_input("Light Duty Km Per Day", value=str(up_int(base_light_duty_km_per_day)))
+
+# convert override strings
+active_user_pct_courier_avg = safe_int(active_user_pct_courier_avg, up_int(base_active_user_pct_courier))
+active_user_pct_commuter_avg = safe_int(active_user_pct_commuter_avg, up_int(base_active_user_pct_commuter))
+heavy_duty_user_pct = safe_int(heavy_duty_user_pct, up_int(base_heavy_duty_user_pct))
+standard_duty_user_pct = safe_int(standard_duty_user_pct, up_int(base_standard_duty_user_pct))
+light_duty_user_pct = safe_int(light_duty_user_pct, up_int(base_light_duty_user_pct))
+heavy_duty_km_per_day = safe_int(heavy_duty_km_per_day, up_int(base_heavy_duty_km_per_day))
+standard_duty_km_per_day = safe_int(standard_duty_km_per_day, up_int(base_standard_duty_km_per_day))
+light_duty_km_per_day = safe_int(light_duty_km_per_day, up_int(base_light_duty_km_per_day))
+
+if heavy_duty_user_pct + standard_duty_user_pct + light_duty_user_pct != 100:
+    st.warning(
+        f"Heavy Duty + Standard Duty + Light Duty must equal %100. Current total: "
+        f"%{heavy_duty_user_pct + standard_duty_user_pct + light_duty_user_pct}"
     )
-    override_active_user_pct_commuter = st.number_input(
-        "Active User % (Commuter E-Scooter)",
-        min_value=0, max_value=100, value=30, step=1
-    )
-
-with d2:
-    override_heavy_km = st.number_input("Heavy Duty Km Per Day", min_value=0, value=180, step=1)
-    override_heavy_pct = st.number_input("Heavy Duty User % (Courier Scooter)", min_value=0, max_value=100, value=40, step=1)
-    override_standard_km = st.number_input("Standard Duty Km Per Day", min_value=0, value=140, step=1)
-    override_standard_pct = st.number_input("Standard Duty User % (Courier Scooter)", min_value=0, max_value=100, value=40, step=1)
-    override_light_km = st.number_input("Light Duty Km Per Day", min_value=0, value=100, step=1)
-    override_light_pct = st.number_input("Light Duty User % (Courier Scooter)", min_value=0, max_value=100, value=20, step=1)
-
-duty_pct_total = override_heavy_pct + override_standard_pct + override_light_pct
-if duty_pct_total != 100:
-    st.warning(f"Heavy Duty + Standard Duty + Light Duty must equal %100. Current total: %{duty_pct_total}")
 
 
 # =========================================================
-# BASE PARAMETERS
+# CALCULATED ASSUMPTIONS
 # =========================================================
-
-grace_period_months = safe_int(get_param_value(assumptions_df, "Grace Period (Months)", 5))
-raw_material_required_before_months = safe_int(get_param_value(assumptions_df, "Raw Material Required Before (Months)", 3))
-stock_in_rate_pct_default = safe_float(get_param_value(assumptions_df, "Stock-In Rate %", 10))
-energy_buy_price_2025 = safe_float(get_param_value(assumptions_df, "Energy Buy Price (2025)", 3.5))
-energy_sell_price_2025 = safe_float(get_param_value(assumptions_df, "Energy Sell Price (2025)", 15))
-newco_share_pct = safe_float(get_param_value(assumptions_df, "NewCo Share %", 40))
-battery_slots_per_cs24 = safe_int(get_param_value(assumptions_df, "Battery Slots Per CS24", 24))
-battery_kwh_each = safe_float(get_param_value(assumptions_df, "Battery kWh Each", 3.24))
-delivery_soc_pct = safe_float(get_param_value(assumptions_df, "Delivery SoC %", 85))
-charging_cycle_per_cs24 = safe_float(get_param_value(assumptions_df, "Charging Cycle Per CS24", 2))
-cs24_hardware_installation_usd = safe_float(get_param_value(assumptions_df, "CS24 Hardware & Installation USD", 5000))
-battery_usd_per_kwh = safe_float(get_param_value(assumptions_df, "Battery USD Per kWh", 200))
-down_payment_pct = safe_float(get_param_value(assumptions_df, "Down Payment %", 25))
-battery_life_years = safe_int(get_param_value(assumptions_df, "Battery Life (Years)", 8))
-tax_rate_pct = safe_float(get_param_value(assumptions_df, "Tax Rate %", 20))
-wh_per_km = safe_float(get_param_value(assumptions_df, "Wh Per Km", 40))
-
-heavy_duty_km_per_day = override_heavy_km
-standard_duty_km_per_day = override_standard_km
-light_duty_km_per_day = override_light_km
-
-heavy_duty_user_pct = override_heavy_pct
-standard_duty_user_pct = override_standard_pct
-light_duty_user_pct = override_light_pct
 
 weighted_avg_km_per_day_courier = math.ceil(
     heavy_duty_km_per_day * heavy_duty_user_pct / 100
@@ -374,8 +409,12 @@ weighted_avg_km_per_day_courier = math.ceil(
     + light_duty_km_per_day * light_duty_user_pct / 100
 )
 
-active_user_pct_courier_avg = override_active_user_pct_courier
-active_user_pct_commuter_avg = override_active_user_pct_commuter
+commuter_km_per_day = 35
+
+km_per_day_system_avg = math.ceil(
+    weighted_avg_km_per_day_courier * active_user_pct_courier_avg / 100
+    + commuter_km_per_day * active_user_pct_commuter_avg / 100
+)
 
 franchise_share_pct = 100 - newco_share_pct
 gross_margin_per_kwh = math.ceil(energy_sell_price_2025 - energy_buy_price_2025)
@@ -384,13 +423,6 @@ newco_margin_per_kwh = math.ceil((energy_sell_price_2025 - energy_buy_price_2025
 total_battery_kwh_per_cs24 = math.ceil(battery_slots_per_cs24 * battery_kwh_each)
 sellable_kwh_per_cycle = math.ceil(total_battery_kwh_per_cs24 * delivery_soc_pct / 100)
 daily_kwh_per_cs24 = math.ceil(sellable_kwh_per_cycle * charging_cycle_per_cs24)
-
-commuter_km_per_day = 35
-
-km_per_day_system_avg = math.ceil(
-    weighted_avg_km_per_day_courier * active_user_pct_courier_avg / 100
-    + commuter_km_per_day * active_user_pct_commuter_avg / 100
-)
 kwh_per_motor_per_day = math.ceil(km_per_day_system_avg * wh_per_km / 1000)
 
 
@@ -432,7 +464,7 @@ if bom_df is not None and not bom_df.empty:
 
 
 # =========================================================
-# FALLBACK MONTHLY SALES IF EXCEL EMPTY
+# FALLBACK MONTHLY INPUTS
 # =========================================================
 
 def build_default_monthly_inputs():
@@ -479,7 +511,6 @@ active_escooters = 0
 installed_cs24 = 0
 cumulative_cash = 0
 personnel_records = []
-
 raw_material_purchase_schedule = {m: 0 for m in range(1, 49)}
 
 for _, row in monthly_inputs_df.iterrows():
@@ -500,26 +531,19 @@ for _, row in monthly_inputs_df.iterrows():
 
     monthly_production_units = courier_facelift_units + courier_new_units + commuter_units
 
-    stock_in_rate_pct_month = stock_in_rate_pct_default
+    stock_in_rate_pct_month = stock_in_rate_pct
     if "Stock-In Rate %" in row.index:
-        stock_in_rate_pct_month = safe_float(row["Stock-In Rate %"], stock_in_rate_pct_default)
+        stock_in_rate_pct_month = safe_float(row["Stock-In Rate %"], stock_in_rate_pct)
 
     units_added_to_stock = math.ceil(monthly_production_units * stock_in_rate_pct_month / 100)
     units_sold_month = monthly_production_units - units_added_to_stock
 
-    inventory_units = inventory_units + units_added_to_stock
+    inventory_units += units_added_to_stock
     active_escooters += units_sold_month
 
-    energy_buy_price_month = math.ceil(
-        energy_buy_price_2025 * (1 + inflation_rate_month / 100)
-    )
-    energy_sell_price_month = math.ceil(
-        energy_sell_price_2025 * (1 + inflation_rate_month / 100)
-    )
-
-    newco_margin_per_kwh_month = math.ceil(
-        (energy_sell_price_month - energy_buy_price_month) * newco_share_pct / 100
-    )
+    energy_buy_price_month = math.ceil(energy_buy_price_2025 * (1 + inflation_rate_month / 100))
+    energy_sell_price_month = math.ceil(energy_sell_price_2025 * (1 + inflation_rate_month / 100))
+    newco_margin_per_kwh_month = math.ceil((energy_sell_price_month - energy_buy_price_month) * newco_share_pct / 100)
 
     monthly_kwh_sold = math.ceil(active_escooters * kwh_per_motor_per_day * 30)
     monthly_revenue = math.ceil(monthly_kwh_sold * energy_sell_price_month)
@@ -694,7 +718,7 @@ personnel_detail_df = pd.DataFrame(personnel_records) if personnel_records else 
 assumption_rows = [
     ["Grace Period (Months)", grace_period_months, "Editable"],
     ["Raw Material Required Before (Months)", raw_material_required_before_months, "Editable"],
-    ["Stock-In Rate %", stock_in_rate_pct_default, "Editable"],
+    ["Stock-In Rate %", stock_in_rate_pct, "Editable"],
     ["Energy Buy Price (2025)", energy_buy_price_2025, "Editable"],
     ["Energy Sell Price (2025)", energy_sell_price_2025, "Editable"],
     ["Gross Margin Per kWh", gross_margin_per_kwh, "Calculated"],
@@ -729,7 +753,7 @@ assumptions_display_df = pd.DataFrame(assumption_rows, columns=["Parameter", "Va
 
 
 # =========================================================
-# DISPLAY FORMATTING (FIXED)
+# DISPLAY FORMATTING
 # =========================================================
 
 assumptions_display_fmt = assumptions_display_df.copy()
@@ -762,12 +786,17 @@ currency_cols = [
     "Installed CS24 Asset Value", "Financing Liability", "Equity Proxy"
 ]
 num_cols = [
-    "Month", "Year", "Courier E-Scooter (Facelift) Units", "Courier E-Scooter (New) Units",
+    "Courier E-Scooter (Facelift) Units", "Courier E-Scooter (New) Units",
     "Commuter E-Scooter Units", "Monthly Production Units", "Units Sold", "Units Added To Stock",
     "Ending Stock Units", "Active E-Scooters", "USD/TRY (Month)", "Inflation Rate (Month)",
     "Energy Buy Price (Month)", "Energy Sell Price (Month)", "Monthly kWh Sold", "Required CS24",
     "New CS24", "Finished Goods Inventory"
 ]
+plain_cols = ["Month", "Year"]
+
+for c in plain_cols:
+    if c in dashboard_monthly_fmt.columns:
+        dashboard_monthly_fmt[c] = dashboard_monthly_fmt[c].map(fmt_plain_int)
 
 for c in currency_cols:
     if c in dashboard_monthly_fmt.columns:
@@ -783,7 +812,7 @@ for c in annual_fmt.columns:
 
 for c in annual_fmt.columns:
     if c == "Year":
-        annual_fmt[c] = annual_fmt[c].map(fmt_num)
+        annual_fmt[c] = annual_fmt[c].map(fmt_plain_int)
     elif c in ["Monthly Production Units", "Units Sold", "Active E-Scooters", "Monthly kWh Sold", "Required CS24"]:
         annual_fmt[c] = annual_fmt[c].map(fmt_num)
     else:
@@ -795,8 +824,11 @@ if not personnel_fmt.empty:
         personnel_fmt[c] = personnel_fmt[c].astype(object)
 
     for c in ["Month", "Headcount"]:
-        if c in personnel_fmt.columns:
+        if c == "Month":
+            personnel_fmt[c] = personnel_fmt[c].map(fmt_plain_int)
+        elif c in personnel_fmt.columns:
             personnel_fmt[c] = personnel_fmt[c].map(fmt_num)
+
     for c in ["Monthly Salary (Actual)", "Monthly Personnel Cost"]:
         if c in personnel_fmt.columns:
             personnel_fmt[c] = personnel_fmt[c].map(fmt_try)
@@ -812,7 +844,7 @@ for c in balance_fmt.columns:
 
 for c in balance_fmt.columns:
     if c == "Month":
-        balance_fmt[c] = balance_fmt[c].map(fmt_num)
+        balance_fmt[c] = balance_fmt[c].map(fmt_plain_int)
     elif c == "Finished Goods Inventory":
         balance_fmt[c] = balance_fmt[c].map(fmt_num)
     else:
@@ -847,7 +879,7 @@ with tab1:
     c5.metric("Final Required CS24", fmt_num(last_row["Required CS24"]))
     c6.metric("Final Cumulative Cash", fmt_try(last_row["Cumulative Cash Balance"]))
     c7.metric("Raw Material Lag", fmt_num(raw_material_required_before_months))
-    c8.metric("Stock-In Rate", fmt_pct(stock_in_rate_pct_default))
+    c8.metric("Stock-In Rate", fmt_pct(stock_in_rate_pct))
 
     st.markdown("### Annual Summary")
     st.dataframe(annual_fmt, use_container_width=True, hide_index=True)
@@ -858,7 +890,7 @@ with tab1:
 with tab2:
     st.subheader("Assumptions")
     st.dataframe(assumptions_display_fmt, use_container_width=True, hide_index=True)
-    st.caption("Editable, Override and Calculated rows are shown in one table. Calculated rows are formula-driven and not directly editable.")
+    st.caption("Editable rows are changed with arrows. Override rows are changed via text inputs above. Calculated rows are formula-driven and read-only.")
 
 with tab3:
     st.subheader("Monthly Financials")
