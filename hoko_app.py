@@ -4,610 +4,920 @@ from io import BytesIO
 import pandas as pd
 import streamlit as st
 
-st.set_page_config(page_title="HOKO Mobility Financial Copilot v3", layout="wide")
+st.set_page_config(page_title="HOKO Mobility Financial Copilot v04", layout="wide")
 
 
-# --------------------------------------------------
-# HELPERS
-# --------------------------------------------------
+# =========================================================
+# FORMAT HELPERS
+# =========================================================
 
-def try_get_param(params_df: pd.DataFrame, key: str, default=None):
-    if params_df is None or params_df.empty:
+def up_int(x):
+    if pd.isna(x):
+        return 0
+    return int(math.ceil(float(x)))
+
+
+def fmt_num(x):
+    return f"{up_int(x):,}"
+
+
+def fmt_try(x):
+    return f"₺{up_int(x):,}"
+
+
+def fmt_pct(x):
+    return f"%{up_int(x)}"
+
+
+def safe_float(x, default=0.0):
+    try:
+        if pd.isna(x):
+            return default
+        return float(x)
+    except Exception:
         return default
-    cols = [c.lower().strip() for c in params_df.columns]
+
+
+def safe_int(x, default=0):
+    try:
+        if pd.isna(x):
+            return default
+        return int(math.ceil(float(x)))
+    except Exception:
+        return default
+
+
+# =========================================================
+# TEMPLATE EXCEL
+# =========================================================
+
+def make_template_excel():
+    assumptions = pd.DataFrame({
+        "Parameter": [
+            "Grace Period (Months)",
+            "Raw Material Required Before (Months)",
+            "Stock-In Rate %",
+            "Energy Buy Price (2025)",
+            "Energy Sell Price (2025)",
+            "NewCo Share %",
+            "Battery Slots Per CS24",
+            "Battery kWh Each",
+            "Delivery SoC %",
+            "Charging Cycle Per CS24",
+            "CS24 Hardware & Installation USD",
+            "Battery USD Per kWh",
+            "Down Payment %",
+            "Battery Life (Years)",
+            "Tax Rate %",
+            "Wh Per Km",
+            "Heavy Duty User % (Courier Scooter)",
+            "Standard Duty User % (Courier Scooter)",
+            "Light Duty User % (Courier Scooter)",
+            "Heavy Duty Km Per Day",
+            "Standard Duty Km Per Day",
+            "Light Duty Km Per Day",
+        ],
+        "Value": [
+            5, 3, 10, 3.5, 15, 40, 24, 3.24, 85, 2, 5000, 200, 25, 8, 20, 40,
+            40, 40, 20, 180, 140, 100
+        ]
+    })
+
+    monthly_inputs = pd.DataFrame({
+        "Month": list(range(1, 49)),
+        "Courier E-Scooter (Facelift) Units": [0]*48,
+        "Courier E-Scooter (New) Units": [0]*48,
+        "Commuter E-Scooter Units": [0]*48,
+        "Active User % (Courier E-Scooter)": [70]*48,
+        "Active User % (Commuter E-Scooter)": [30]*48,
+    })
+
+    macro = pd.DataFrame({
+        "Year": [2025, 2026, 2027, 2028],
+        "Average USD/TRY (H1)": [45, 52, 60, 68],
+        "Average USD/TRY (H2)": [48, 56, 64, 72],
+        "Average Inflation Rate (H1)": [20, 16, 12, 10],
+        "Average Inflation Rate (H2)": [18, 14, 10, 8],
+    })
+
+    opex = pd.DataFrame({
+        "Cost Item": ["Rent", "Marketing", "Software & IT", "HQ Expenses"],
+        "Monthly Cost (2025)": [250000, 150000, 80000, 200000],
+        "Type": ["Fixed", "Semi-Variable", "Fixed", "Fixed"],
+        "Category": ["Admin", "Growth", "Tech", "Admin"],
+        "Escalation Type": ["Inflation", "Inflation", "Inflation", "Inflation"],
+        "Escalation Rate %": [0, 0, 0, 0],
+        "Notes": ["", "", "", ""],
+    })
+
+    personnel_base = pd.DataFrame({
+        "Role": [
+            "Plant Manager (Fabrika Müdürü)",
+            "Assembly Operator (Montaj Operatörü)",
+            "Line Leader (Hat Lideri)",
+            "Quality Control Operator (Kalite Kontrol Operatörü)",
+            "Test Operator (Test Operatörü)",
+            "Line Feeder / Internal Logistics Operator (Hat Besleme / İç Lojistik Operatörü)",
+            "CEO",
+            "Business Development Manager",
+        ],
+        "Base Salary (2025)": [120000, 35000, 45000, 40000, 38000, 36000, 250000, 120000],
+        "Notes": ["", "", "", "", "", "", "", ""],
+    })
+
+    personnel_rules = pd.DataFrame({
+        "Role": [
+            "Plant Manager (Fabrika Müdürü)",
+            "Assembly Operator (Montaj Operatörü)",
+            "Line Leader (Hat Lideri)",
+            "Quality Control Operator (Kalite Kontrol Operatörü)",
+            "Test Operator (Test Operatörü)",
+            "Line Feeder / Internal Logistics Operator (Hat Besleme / İç Lojistik Operatörü)",
+            "CEO",
+            "Business Development Manager",
+        ],
+        "First Hire Month After Grace": [1, 1, 1, 1, 1, 1, 4, 4],
+        "Scaling Factor": [1, 1000, 1000, 1000, 1000, 1000, 1, 3000],
+        "Max Cap": [5, 500, 50, 50, 50, 50, 1, 10],
+        "Base Headcount": [1, 1, 1, 1, 1, 1, 1, 1],
+    })
+
+    bom = pd.DataFrame({
+        "Item": ["Frame", "Motor", "Controller", "Plastic Parts"],
+        "Product": [
+            "Courier E-Scooter (Facelift)",
+            "Courier E-Scooter (New)",
+            "Commuter E-Scooter",
+            "Courier E-Scooter (New)"
+        ],
+        "Unit Cost USD": [120, 180, 90, 60],
+    })
+
+    product_capex = pd.DataFrame({
+        "Product": [
+            "Courier E-Scooter (Facelift)",
+            "Courier E-Scooter (New)",
+            "Commuter E-Scooter",
+        ],
+        "CapEx Per Unit USD": [700, 900, 650],
+        "Battery kWh": [6.48, 6.48, 4.86],
+        "Notes": ["", "", ""],
+    })
+
+    cashflow = pd.DataFrame({"Month": list(range(1, 49)), "Notes": [""] * 48})
+
+    bio = BytesIO()
+    with pd.ExcelWriter(bio, engine="openpyxl") as writer:
+        assumptions.to_excel(writer, sheet_name="Assumptions", index=False)
+        monthly_inputs.to_excel(writer, sheet_name="Monthly Inputs", index=False)
+        macro.to_excel(writer, sheet_name="Macro Assumptions", index=False)
+        opex.to_excel(writer, sheet_name="OPEX", index=False)
+        personnel_base.to_excel(writer, sheet_name="Personnel Base", index=False)
+        personnel_rules.to_excel(writer, sheet_name="Personnel Monthly Rules", index=False)
+        bom.to_excel(writer, sheet_name="BoM List", index=False)
+        product_capex.to_excel(writer, sheet_name="Product CapEx", index=False)
+        cashflow.to_excel(writer, sheet_name="Cash Flow Statement", index=False)
+
+    bio.seek(0)
+    return bio.getvalue()
+
+
+# =========================================================
+# PARAM READERS
+# =========================================================
+
+def get_param_value(df, name, default=0):
+    if df is None or df.empty:
+        return default
+    cols = [str(c).strip().lower() for c in df.columns]
     if "parameter" not in cols or "value" not in cols:
         return default
-    pcol = params_df.columns[cols.index("parameter")]
-    vcol = params_df.columns[cols.index("value")]
-    hit = params_df[params_df[pcol].astype(str).str.strip().str.lower() == key.strip().lower()]
+    pcol = df.columns[cols.index("parameter")]
+    vcol = df.columns[cols.index("value")]
+    hit = df[df[pcol].astype(str).str.strip().str.lower() == name.strip().lower()]
     if hit.empty:
         return default
     return hit.iloc[0][vcol]
 
 
-def fmt_try(x):
-    return f"₺{x:,.0f}"
+def get_half_for_month(month_no):
+    year_index = (month_no - 1) // 12
+    month_in_year = ((month_no - 1) % 12) + 1
+    year = 2025 + year_index
+    half = "H1" if month_in_year <= 6 else "H2"
+    return year, half
 
 
-def fmt_num(x):
-    return f"{x:,.0f}"
+def get_macro_value(macro_df, year, half, field_base):
+    if macro_df is None or macro_df.empty:
+        return 0
+    year_row = macro_df[macro_df["Year"] == year]
+    if year_row.empty:
+        return 0
+    col = f"{field_base} ({half})"
+    if col not in macro_df.columns:
+        return 0
+    return safe_float(year_row.iloc[0][col], 0)
 
 
-def fmt_pct(x):
-    return f"{x*100:,.1f}%"
+# =========================================================
+# PAGE HEADER
+# =========================================================
 
-
-def make_template_excel():
-    main_parameters = pd.DataFrame({
-        "Parameter": [
-            "Motor Count",
-            "Km per Day",
-            "Wh per km",
-            "Sell Price",
-            "Buy Price",
-            "Company Share",
-            "Cycle per CS24",
-            "Battery kWh Each",
-            "Battery Slots",
-            "Delivery SoC",
-            "CS24 Hardware USD",
-            "Battery USD per kWh",
-            "USDTRY",
-            "Grace Period Months",
-            "CS24 Down Payment %",
-            "Battery Life Years",
-        ],
-        "Value": [
-            6000, 150, 40, 15, 3.5, 0.80, 2.0, 3.24, 24, 0.85, 5000, 200, 44.7795, 5, 0.25, 8
-        ]
-    })
-
-    personnel = pd.DataFrame({
-        "Role": ["CEO", "CFO", "Operations Manager", "Technician", "Customer Support"],
-        "Count": [1, 1, 2, 8, 5],
-        "Monthly Salary": [150000, 120000, 90000, 45000, 35000]
-    })
-
-    bom = pd.DataFrame({
-        "Item": ["Frame", "Motor", "Controller", "Battery Pack", "Charger", "Telematics"],
-        "Unit Cost": [5000, 12000, 4000, 22000, 1500, 1000]
-    })
-
-    cashflow = pd.DataFrame({
-        "Month": list(range(1, 49)),
-        "Notes": ["" for _ in range(48)]
-    })
-
-    bio = BytesIO()
-    with pd.ExcelWriter(bio, engine="openpyxl") as writer:
-        main_parameters.to_excel(writer, sheet_name="Main Parameters", index=False)
-        personnel.to_excel(writer, sheet_name="Personnel", index=False)
-        bom.to_excel(writer, sheet_name="BoM List", index=False)
-        cashflow.to_excel(writer, sheet_name="Cash Flow Statement", index=False)
-    bio.seek(0)
-    return bio.getvalue()
-
-
-# --------------------------------------------------
-# HEADER
-# --------------------------------------------------
-
-st.title("HOKO Mobility Financial Copilot v3")
-st.caption("Excel-driven Business Plan model with override logic, 4-year cash flow, and investor-style outputs.")
+st.title("HOKO Mobility Financial Copilot v04")
+st.caption("Excel-Driven, Multi-Product, Monthly Financial Model")
 
 with st.expander("Excel Upload Instructions", expanded=True):
-    st.markdown(
-        """
+    st.markdown("""
 **Please upload your Business Plan Excel file.**
 
 Required sheets:
-1. `Main Parameters`
-2. `Personnel`
-3. `BoM List`
-4. `Cash Flow Statement`
+1. Assumptions
+2. Monthly Inputs
+3. Macro Assumptions
+4. OPEX
+5. Personnel Base
+6. Personnel Monthly Rules
+7. BoM List
+8. Product CapEx
+9. Cash Flow Statement
 
 Rules:
-1. Excel is used as a **structure + source file**
-2. **Conflicting parameters are NOT taken from Excel** if overridden in app
-3. The app values remain dominant for locked assumptions
-4. Cash flow horizon is fixed at **48 months**
-5. Grace Period is fixed at **5 months** unless you intentionally change it
-        """
-    )
+1. Dashboard is for outputs and a few critical manual overrides only
+2. Assumptions contain both Editable and Calculated rows in one table
+3. Display values are rounded up
+4. Numbers use comma-separated thousands
+5. Percentages are shown as %45 format
+""")
 
-template_bytes = make_template_excel()
 st.download_button(
     "Download Template Excel",
-    data=template_bytes,
-    file_name="HOKO_BP_Template.xlsx",
+    data=make_template_excel(),
+    file_name="HOKO_BP_Template_v04.xlsx",
     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 )
 
 uploaded_file = st.file_uploader("Upload Business Plan Excel", type=["xlsx"])
 
 
-# --------------------------------------------------
+# =========================================================
 # READ EXCEL
-# --------------------------------------------------
+# =========================================================
 
-excel = None
-params_df = None
-personnel_df = None
+assumptions_df = None
+monthly_inputs_df = None
+macro_df = None
+opex_df = None
+personnel_base_df = None
+personnel_rules_df = None
 bom_df = None
-cashflow_df = None
-sheet_check_ok = False
+product_capex_df = None
+cashflow_sheet_df = None
+excel_ok = False
 
 if uploaded_file is not None:
     try:
-        excel = pd.ExcelFile(uploaded_file)
-        required_sheets = ["Main Parameters", "Personnel", "BoM List", "Cash Flow Statement"]
-        missing = [s for s in required_sheets if s not in excel.sheet_names]
-
+        xls = pd.ExcelFile(uploaded_file)
+        required = [
+            "Assumptions",
+            "Monthly Inputs",
+            "Macro Assumptions",
+            "OPEX",
+            "Personnel Base",
+            "Personnel Monthly Rules",
+            "BoM List",
+            "Product CapEx",
+            "Cash Flow Statement",
+        ]
+        missing = [s for s in required if s not in xls.sheet_names]
         if missing:
-            st.error(f"Missing required sheet(s): {', '.join(missing)}")
+            st.error(f"Missing sheet(s): {', '.join(missing)}")
         else:
-            params_df = pd.read_excel(excel, "Main Parameters")
-            personnel_df = pd.read_excel(excel, "Personnel")
-            bom_df = pd.read_excel(excel, "BoM List")
-            cashflow_df = pd.read_excel(excel, "Cash Flow Statement")
-            sheet_check_ok = True
+            assumptions_df = pd.read_excel(xls, "Assumptions")
+            monthly_inputs_df = pd.read_excel(xls, "Monthly Inputs")
+            macro_df = pd.read_excel(xls, "Macro Assumptions")
+            opex_df = pd.read_excel(xls, "OPEX")
+            personnel_base_df = pd.read_excel(xls, "Personnel Base")
+            personnel_rules_df = pd.read_excel(xls, "Personnel Monthly Rules")
+            bom_df = pd.read_excel(xls, "BoM List")
+            product_capex_df = pd.read_excel(xls, "Product CapEx")
+            cashflow_sheet_df = pd.read_excel(xls, "Cash Flow Statement")
+            excel_ok = True
             st.success("Excel uploaded successfully.")
     except Exception as e:
         st.error(f"Excel could not be read: {e}")
 
 
-# --------------------------------------------------
-# LOCKED / OVERRIDE PARAMETERS
-# --------------------------------------------------
+# =========================================================
+# MANUAL OVERRIDES ON DASHBOARD
+# =========================================================
 
-st.sidebar.header("Locked / Override Parameters")
+st.markdown("### Dashboard Manual Overrides")
 
-# Locked model assumptions from current workstream
-fleet_base = st.sidebar.number_input("Base Fleet (for reference)", value=6000, step=1000)
-daily_km = st.sidebar.number_input("Km per Day", value=150.0, step=5.0)
-wh_per_km = st.sidebar.number_input("Wh per km", value=40.0, step=1.0)
+d1, d2 = st.columns(2)
 
-battery_slots = st.sidebar.number_input("Battery Slots per CS24", value=24, step=1)
-battery_kwh_each = st.sidebar.number_input("Battery kWh Each", value=3.24, step=0.01)
-delivery_soc = st.sidebar.number_input("Delivery SoC", value=0.85, step=0.01)
+with d1:
+    override_active_user_pct_courier = st.number_input(
+        "Active User % (Courier E-Scooter)",
+        min_value=0, max_value=100, value=70, step=1
+    )
+    override_active_user_pct_commuter = st.number_input(
+        "Active User % (Commuter E-Scooter)",
+        min_value=0, max_value=100, value=30, step=1
+    )
 
-cycle_per_cs24 = st.sidebar.number_input("Charging Cycle per CS24", value=2.0, step=0.1)
+with d2:
+    override_heavy_km = st.number_input("Heavy Duty Km Per Day", min_value=0, value=180, step=1)
+    override_heavy_pct = st.number_input("Heavy Duty User % (Courier Scooter)", min_value=0, max_value=100, value=40, step=1)
+    override_standard_km = st.number_input("Standard Duty Km Per Day", min_value=0, value=140, step=1)
+    override_standard_pct = st.number_input("Standard Duty User % (Courier Scooter)", min_value=0, max_value=100, value=40, step=1)
+    override_light_km = st.number_input("Light Duty Km Per Day", min_value=0, value=100, step=1)
+    override_light_pct = st.number_input("Light Duty User % (Courier Scooter)", min_value=0, max_value=100, value=20, step=1)
 
-buy_price = st.sidebar.number_input("Electricity Buy Price (TL/kWh)", value=3.5, step=0.1)
-sell_price = st.sidebar.number_input("Service Sell Price (TL/kWh)", value=15.0, step=0.5)
-company_share = st.sidebar.number_input("NewCo Share", value=0.80, step=0.01)
-
-cs24_hardware_usd = st.sidebar.number_input("CS24 Hardware Cost (USD)", value=5000.0, step=100.0)
-battery_usd_per_kwh = st.sidebar.number_input("Battery Cost (USD/kWh)", value=200.0, step=5.0)
-usdtry = st.sidebar.number_input("USDTRY", value=44.7795, step=0.1)
-
-grace_period_months = st.sidebar.number_input("Grace Period (Months)", value=5, step=1)
-battery_life_years = st.sidebar.number_input("Battery Life (Years)", value=8, step=1)
-down_payment_pct = st.sidebar.number_input("CS24 Down Payment %", value=0.25, step=0.01)
-
-# Additional model items requested
-franchise_share = 1 - company_share
-monthly_other_opex = st.sidebar.number_input("Monthly Other OPEX (TL)", value=500000.0, step=50000.0)
-monthly_rent = st.sidebar.number_input("Monthly Rent / Admin (TL)", value=250000.0, step=50000.0)
-monthly_marketing = st.sidebar.number_input("Monthly Marketing (TL)", value=150000.0, step=50000.0)
-monthly_gna = st.sidebar.number_input("Monthly G&A (TL)", value=200000.0, step=50000.0)
-monthly_interest = st.sidebar.number_input("Monthly Financing Cost (TL)", value=0.0, step=50000.0)
-tax_rate = st.sidebar.number_input("Tax Rate", value=0.20, step=0.01)
-
-motor_gross_profit = st.sidebar.number_input("Motor Gross Profit per Unit (TL)", value=80000.0, step=5000.0)
-cs24_other_gross_profit_usd = st.sidebar.number_input("CS24 Other Gross Profit per Year (USD)", value=1200.0, step=100.0)
-
-st.sidebar.markdown("---")
-st.sidebar.caption("Excel values are read for structure, but the sidebar overrides are dominant for conflicts.")
+duty_pct_total = override_heavy_pct + override_standard_pct + override_light_pct
+if duty_pct_total != 100:
+    st.warning(f"Heavy Duty + Standard Duty + Light Duty must equal %100. Current total: %{duty_pct_total}")
 
 
-# --------------------------------------------------
-# SALES SCHEDULE (LOCKED)
-# --------------------------------------------------
+# =========================================================
+# BASE PARAMETERS
+# =========================================================
 
-sales_schedule = {}
-for m in range(1, 6):
-    sales_schedule[m] = 0
+# from assumptions or defaults
+grace_period_months = safe_int(get_param_value(assumptions_df, "Grace Period (Months)", 5))
+raw_material_required_before_months = safe_int(get_param_value(assumptions_df, "Raw Material Required Before (Months)", 3))
+stock_in_rate_pct_default = safe_float(get_param_value(assumptions_df, "Stock-In Rate %", 10))
+energy_buy_price_2025 = safe_float(get_param_value(assumptions_df, "Energy Buy Price (2025)", 3.5))
+energy_sell_price_2025 = safe_float(get_param_value(assumptions_df, "Energy Sell Price (2025)", 15))
+newco_share_pct = safe_float(get_param_value(assumptions_df, "NewCo Share %", 40))
+battery_slots_per_cs24 = safe_int(get_param_value(assumptions_df, "Battery Slots Per CS24", 24))
+battery_kwh_each = safe_float(get_param_value(assumptions_df, "Battery kWh Each", 3.24))
+delivery_soc_pct = safe_float(get_param_value(assumptions_df, "Delivery SoC %", 85))
+charging_cycle_per_cs24 = safe_float(get_param_value(assumptions_df, "Charging Cycle Per CS24", 2))
+cs24_hardware_installation_usd = safe_float(get_param_value(assumptions_df, "CS24 Hardware & Installation USD", 5000))
+battery_usd_per_kwh = safe_float(get_param_value(assumptions_df, "Battery USD Per kWh", 200))
+down_payment_pct = safe_float(get_param_value(assumptions_df, "Down Payment %", 25))
+battery_life_years = safe_int(get_param_value(assumptions_df, "Battery Life (Years)", 8))
+tax_rate_pct = safe_float(get_param_value(assumptions_df, "Tax Rate %", 20))
+wh_per_km = safe_float(get_param_value(assumptions_df, "Wh Per Km", 40))
 
-sales_schedule[6] = 2000
-sales_schedule[7] = 2500
-sales_schedule[8] = 3000
-sales_schedule[9] = 3000
-sales_schedule[10] = 3250
-sales_schedule[11] = 3250
-sales_schedule[12] = 3250
+# usage overrides from dashboard
+heavy_duty_km_per_day = override_heavy_km
+standard_duty_km_per_day = override_standard_km
+light_duty_km_per_day = override_light_km
 
-for m in range(13, 19):
-    sales_schedule[m] = 3500
+heavy_duty_user_pct = override_heavy_pct
+standard_duty_user_pct = override_standard_pct
+light_duty_user_pct = override_light_pct
 
-for m in range(19, 49):
-    sales_schedule[m] = 4000
+weighted_avg_km_per_day_courier = math.ceil(
+    heavy_duty_km_per_day * heavy_duty_user_pct / 100
+    + standard_duty_km_per_day * standard_duty_user_pct / 100
+    + light_duty_km_per_day * light_duty_user_pct / 100
+)
+
+active_user_pct_courier_avg = override_active_user_pct_courier
+active_user_pct_commuter_avg = override_active_user_pct_commuter
+
+franchise_share_pct = 100 - newco_share_pct
+gross_margin_per_kwh = math.ceil(energy_sell_price_2025 - energy_buy_price_2025)
+newco_margin_per_kwh = math.ceil((energy_sell_price_2025 - energy_buy_price_2025) * newco_share_pct / 100)
+
+total_battery_kwh_per_cs24 = math.ceil(battery_slots_per_cs24 * battery_kwh_each)
+sellable_kwh_per_cycle = math.ceil(total_battery_kwh_per_cs24 * delivery_soc_pct / 100)
+daily_kwh_per_cs24 = math.ceil(sellable_kwh_per_cycle * charging_cycle_per_cs24)
+
+# commuter assumption: use a simple default if not otherwise provided
+commuter_km_per_day = 35
+
+km_per_day_system_avg = math.ceil(
+    weighted_avg_km_per_day_courier * active_user_pct_courier_avg / 100
+    + commuter_km_per_day * active_user_pct_commuter_avg / 100
+)
+kwh_per_motor_per_day = math.ceil(km_per_day_system_avg * wh_per_km / 1000)
 
 
-# --------------------------------------------------
-# PERSONNEL
-# --------------------------------------------------
+# =========================================================
+# PERSONNEL MAPS
+# =========================================================
 
-personnel_monthly_total = 0.0
-if personnel_df is not None and not personnel_df.empty:
-    lower_cols = [c.lower().strip() for c in personnel_df.columns]
-    if "count" in lower_cols and "monthly salary" in lower_cols:
-        ccol = personnel_df.columns[lower_cols.index("count")]
-        scol = personnel_df.columns[lower_cols.index("monthly salary")]
-        personnel_df["Monthly Personnel Cost"] = personnel_df[ccol].fillna(0) * personnel_df[scol].fillna(0)
-        personnel_monthly_total = personnel_df["Monthly Personnel Cost"].sum()
-else:
-    personnel_monthly_total = 0.0
+base_salary_map = {}
+if personnel_base_df is not None and not personnel_base_df.empty:
+    for _, row in personnel_base_df.iterrows():
+        base_salary_map[str(row["Role"]).strip()] = safe_float(row["Base Salary (2025)"], 0)
+
+personnel_rule_rows = []
+if personnel_rules_df is not None and not personnel_rules_df.empty:
+    for _, row in personnel_rules_df.iterrows():
+        personnel_rule_rows.append({
+            "Role": str(row["Role"]).strip(),
+            "First Hire Month After Grace": safe_int(row["First Hire Month After Grace"], 1),
+            "Scaling Factor": max(1, safe_int(row["Scaling Factor"], 1)),
+            "Max Cap": max(1, safe_int(row["Max Cap"], 1)),
+            "Base Headcount": max(1, safe_int(row["Base Headcount"], 1)),
+        })
 
 
-# --------------------------------------------------
-# CORE CALCULATION
-# --------------------------------------------------
+# =========================================================
+# PRODUCT MAPS
+# =========================================================
 
-daily_kwh_per_motor = daily_km * wh_per_km / 1000
-annual_kwh_per_motor = daily_kwh_per_motor * 365
+product_capex_map = {}
+if product_capex_df is not None and not product_capex_df.empty:
+    for _, row in product_capex_df.iterrows():
+        product_capex_map[str(row["Product"]).strip()] = safe_float(row["CapEx Per Unit USD"], 0)
 
-cs24_total_battery_kwh = battery_slots * battery_kwh_each
-sellable_kwh_per_cycle = cs24_total_battery_kwh * delivery_soc
-daily_kwh_per_cs24 = sellable_kwh_per_cycle * cycle_per_cs24
-monthly_kwh_per_cs24 = daily_kwh_per_cs24 * 30
+bom_monthly_usd_per_product = {}
+if bom_df is not None and not bom_df.empty:
+    grouped = bom_df.groupby("Product", as_index=False)["Unit Cost USD"].sum()
+    for _, row in grouped.iterrows():
+        bom_monthly_usd_per_product[str(row["Product"]).strip()] = safe_float(row["Unit Cost USD"], 0)
 
-gross_margin_per_kwh = sell_price - buy_price
-company_margin_per_kwh = gross_margin_per_kwh * company_share
-franchise_margin_per_kwh = gross_margin_per_kwh * franchise_share
 
-battery_total_usd = cs24_total_battery_kwh * battery_usd_per_kwh
-cs24_total_capex_try = (cs24_hardware_usd + battery_total_usd) * usdtry
-station_down_payment_try = cs24_total_capex_try * down_payment_pct
-company_financed_per_cs24_try = cs24_total_capex_try - station_down_payment_try
+# =========================================================
+# FALLBACK MONTHLY SALES IF EXCEL EMPTY
+# =========================================================
 
-active = 0
-cum_cash = 0.0
-cash_rows = []
+def build_default_monthly_inputs():
+    rows = []
+    for m in range(1, 49):
+        if 1 <= m <= 5:
+            total = 0
+        elif m == 6:
+            total = 2000
+        elif m == 7:
+            total = 2500
+        elif m in [8, 9]:
+            total = 3000
+        elif m in [10, 11, 12]:
+            total = 3250
+        elif 13 <= m <= 18:
+            total = 3500
+        else:
+            total = 4000
 
+        rows.append({
+            "Month": m,
+            "Courier E-Scooter (Facelift) Units": 0,
+            "Courier E-Scooter (New) Units": total,
+            "Commuter E-Scooter Units": 0,
+            "Active User % (Courier E-Scooter)": 70,
+            "Active User % (Commuter E-Scooter)": 30,
+        })
+    return pd.DataFrame(rows)
+
+
+if monthly_inputs_df is None or monthly_inputs_df.empty:
+    monthly_inputs_df = build_default_monthly_inputs()
+
+
+# =========================================================
+# MONTHLY ENGINE
+# =========================================================
+
+results = []
+inventory_units = 0
+inventory_raw_material_value = 0
+active_escooters = 0
 installed_cs24 = 0
+cumulative_cash = 0
 
-for m in range(1, 49):
-    sold = sales_schedule[m]
-    active += sold
+# pre-build raw material schedule
+raw_material_purchase_schedule = {m: 0 for m in range(1, 49)}
 
-    daily_kwh = active * daily_kwh_per_motor
-    monthly_kwh = daily_kwh * 30
+for _, row in monthly_inputs_df.iterrows():
+    month_no = safe_int(row["Month"], 1)
+    year, half = get_half_for_month(month_no)
 
-    required_cs24 = math.ceil(daily_kwh / daily_kwh_per_cs24) if daily_kwh_per_cs24 > 0 else 0
-    new_cs24 = max(0, required_cs24 - installed_cs24)
+    usd_try_month = get_macro_value(macro_df, year, half, "Average USD/TRY")
+    inflation_rate_month = get_macro_value(macro_df, year, half, "Average Inflation Rate")
 
-    installed_cs24 = required_cs24
+    if usd_try_month == 0:
+        usd_try_month = 45
+    if inflation_rate_month == 0:
+        inflation_rate_month = 15
 
-    # Revenue starts after grace period
-    if m <= grace_period_months:
-        monthly_revenue = 0.0
-        energy_cost = 0.0
-        energy_gross_profit = 0.0
-        motor_gross = 0.0
-        cs24_other_gross = 0.0
-    else:
-        monthly_revenue = monthly_kwh * sell_price
-        energy_cost = monthly_kwh * buy_price
-        energy_gross_profit = monthly_kwh * company_margin_per_kwh
-        motor_gross = sold * motor_gross_profit
-        cs24_other_gross = installed_cs24 * ((cs24_other_gross_profit_usd * usdtry) / 12)
+    courier_facelift_units = safe_int(row.get("Courier E-Scooter (Facelift) Units", 0), 0)
+    courier_new_units = safe_int(row.get("Courier E-Scooter (New) Units", 0), 0)
+    commuter_units = safe_int(row.get("Commuter E-Scooter Units", 0), 0)
 
-    total_gross_profit = energy_gross_profit + motor_gross + cs24_other_gross
+    monthly_production_units = courier_facelift_units + courier_new_units + commuter_units
 
-    monthly_personnel = personnel_monthly_total
-    monthly_opex_total = monthly_personnel + monthly_other_opex + monthly_rent + monthly_marketing + monthly_gna
+    stock_in_rate_pct_month = stock_in_rate_pct_default
+    if "Stock-In Rate %" in row.index:
+        stock_in_rate_pct_month = safe_float(row["Stock-In Rate %"], stock_in_rate_pct_default)
 
-    ebitda_proxy = total_gross_profit - monthly_opex_total
+    units_added_to_stock = math.ceil(monthly_production_units * stock_in_rate_pct_month / 100)
+    units_sold_month = monthly_production_units - units_added_to_stock
 
-    capex_out = new_cs24 * company_financed_per_cs24_try
-    ebt = ebitda_proxy - monthly_interest
-    tax = max(0.0, ebt) * tax_rate
-    net_income = ebt - tax
+    inventory_units = inventory_units + units_added_to_stock
 
-    net_cash_flow = net_income - capex_out
-    cum_cash += net_cash_flow
+    # active users monthly ratios from Excel, but dashboard annual override dominates system avg usage
+    active_escooters += units_sold_month
 
-    inventory_battery_asset = installed_cs24 * cs24_total_capex_try
-    debt_like_financing = installed_cs24 * company_financed_per_cs24_try
-    equity_like_down_payment = installed_cs24 * station_down_payment_try
-    retained_earnings = cum_cash
-    cash_balance = cum_cash
+    # monthly prices from macro
+    energy_buy_price_month = math.ceil(
+        energy_buy_price_2025 * (1 + inflation_rate_month / 100)
+    )
+    energy_sell_price_month = math.ceil(
+        energy_sell_price_2025 * (1 + inflation_rate_month / 100)
+    )
 
-    cash_rows.append({
-        "Month": m,
-        "Sold Motors": sold,
-        "Active Motors": active,
-        "Daily kWh": daily_kwh,
-        "Monthly kWh": monthly_kwh,
-        "Required CS24": required_cs24,
-        "New CS24": new_cs24,
-        "Revenue": monthly_revenue,
-        "Energy Cost": energy_cost,
-        "Energy GP (NewCo)": energy_gross_profit,
-        "Motor Gross Profit": motor_gross,
-        "CS24 Other GP": cs24_other_gross,
-        "Total Gross Profit": total_gross_profit,
-        "Personnel Cost": monthly_personnel,
-        "Other OPEX": monthly_other_opex,
-        "Rent/Admin": monthly_rent,
-        "Marketing": monthly_marketing,
-        "G&A": monthly_gna,
-        "EBITDA Proxy": ebitda_proxy,
-        "Interest": monthly_interest,
-        "Tax": tax,
-        "Net Income": net_income,
-        "CapEx Outflow": capex_out,
-        "Net Cash Flow": net_cash_flow,
-        "Cumulative Cash": cum_cash,
-        "Assets - Installed CS24": inventory_battery_asset,
-        "Liabilities - Financing": debt_like_financing,
-        "Equity Proxy": equity_like_down_payment + retained_earnings,
-        "Cash Balance": cash_balance,
+    newco_margin_per_kwh_month = math.ceil(
+        (energy_sell_price_month - energy_buy_price_month) * newco_share_pct / 100
+    )
+
+    monthly_kwh_sold = math.ceil(active_escooters * kwh_per_motor_per_day * 30)
+    monthly_revenue = math.ceil(monthly_kwh_sold * energy_sell_price_month)
+    monthly_energy_cost = math.ceil(monthly_kwh_sold * energy_buy_price_month)
+    monthly_energy_gp_newco = math.ceil(monthly_kwh_sold * newco_margin_per_kwh_month)
+
+    monthly_motor_gross_profit = math.ceil(units_sold_month * 80000)
+
+    # CS24
+    monthly_cs24_required = math.ceil((active_escooters * kwh_per_motor_per_day) / max(1, daily_kwh_per_cs24))
+    monthly_new_cs24 = max(0, monthly_cs24_required - installed_cs24)
+    installed_cs24 = monthly_cs24_required
+
+    cs24_total_capex_try_month = math.ceil(
+        (cs24_hardware_installation_usd + battery_slots_per_cs24 * battery_kwh_each * battery_usd_per_kwh) * usd_try_month
+    )
+    financed_per_cs24_try_month = math.ceil(cs24_total_capex_try_month * (1 - down_payment_pct / 100))
+    monthly_cs24_capex_outflow = math.ceil(monthly_new_cs24 * financed_per_cs24_try_month)
+
+    monthly_cs24_other_gp = math.ceil(installed_cs24 * ((1200 * usd_try_month) / 12))
+
+    # raw material logic with lag and stock slow-down
+    bom_usd_total = (
+        courier_facelift_units * bom_monthly_usd_per_product.get("Courier E-Scooter (Facelift)", 0)
+        + courier_new_units * bom_monthly_usd_per_product.get("Courier E-Scooter (New)", 0)
+        + commuter_units * bom_monthly_usd_per_product.get("Commuter E-Scooter", 0)
+    )
+    current_raw_material_need_try = math.ceil(bom_usd_total * usd_try_month)
+
+    slowdown_factor = max(0, 1 - stock_in_rate_pct_month / 100)
+    adjusted_raw_material_need_try = math.ceil(current_raw_material_need_try * slowdown_factor)
+
+    purchase_month = month_no - raw_material_required_before_months
+    if 1 <= purchase_month <= 48:
+        raw_material_purchase_schedule[purchase_month] += adjusted_raw_material_need_try
+
+    raw_material_cost_month = raw_material_purchase_schedule.get(month_no, 0)
+    inventory_raw_material_value = max(0, inventory_raw_material_value + raw_material_cost_month - adjusted_raw_material_need_try)
+
+    # personnel
+    total_personnel_cost_month = 0
+    personnel_detail = []
+
+    for pr in personnel_rule_rows:
+        role = pr["Role"]
+        first_hire_month_after_grace = pr["First Hire Month After Grace"]
+        actual_hire_month = grace_period_months + first_hire_month_after_grace - 1
+
+        if month_no < actual_hire_month:
+            headcount = 0
+        else:
+            scaled = math.ceil(monthly_production_units / max(1, pr["Scaling Factor"]))
+            headcount = max(pr["Base Headcount"], scaled)
+            headcount = min(headcount, pr["Max Cap"])
+
+        salary_base = base_salary_map.get(role, 0)
+        monthly_salary_actual = math.ceil(salary_base * (1 + inflation_rate_month / 100))
+        monthly_personnel_cost = math.ceil(headcount * monthly_salary_actual)
+
+        total_personnel_cost_month += monthly_personnel_cost
+
+        personnel_detail.append({
+            "Month": month_no,
+            "Role": role,
+            "Headcount": headcount,
+            "Monthly Salary (Actual)": monthly_salary_actual,
+            "Monthly Personnel Cost": monthly_personnel_cost,
+        })
+
+    # opex
+    total_opex_month = 0
+    if opex_df is not None and not opex_df.empty:
+        for _, orow in opex_df.iterrows():
+            base_cost = safe_float(orow["Monthly Cost (2025)"], 0)
+            esc_type = str(orow["Escalation Type"]).strip().lower()
+            custom_rate = safe_float(orow["Escalation Rate %"], 0)
+
+            if esc_type == "custom":
+                actual_cost = math.ceil(base_cost * (1 + custom_rate / 100))
+            elif esc_type == "fx linked":
+                actual_cost = math.ceil(base_cost * (usd_try_month / 45))
+            else:
+                actual_cost = math.ceil(base_cost * (1 + inflation_rate_month / 100))
+
+            total_opex_month += actual_cost
+
+    monthly_total_gross_profit = math.ceil(
+        monthly_energy_gp_newco + monthly_motor_gross_profit + monthly_cs24_other_gp
+    )
+    monthly_ebitda_proxy = math.ceil(
+        monthly_total_gross_profit - total_personnel_cost_month - total_opex_month
+    )
+
+    monthly_interest_cost = 0
+    monthly_tax = math.ceil(max(0, monthly_ebitda_proxy) * tax_rate_pct / 100)
+    monthly_net_income = math.ceil(monthly_ebitda_proxy - monthly_interest_cost - monthly_tax)
+
+    monthly_net_cash_flow = math.ceil(
+        monthly_net_income - monthly_cs24_capex_outflow - raw_material_cost_month
+    )
+    cumulative_cash += monthly_net_cash_flow
+
+    installed_cs24_asset_value = math.ceil(installed_cs24 * cs24_total_capex_try_month)
+    financing_liability = math.ceil(installed_cs24 * financed_per_cs24_try_month)
+    equity_proxy = math.ceil(max(0, cumulative_cash) + installed_cs24 * (cs24_total_capex_try_month - financed_per_cs24_try_month))
+
+    results.append({
+        "Month": month_no,
+        "Year": year,
+        "Half": half,
+        "Courier E-Scooter (Facelift) Units": courier_facelift_units,
+        "Courier E-Scooter (New) Units": courier_new_units,
+        "Commuter E-Scooter Units": commuter_units,
+        "Monthly Production Units": monthly_production_units,
+        "Units Sold": units_sold_month,
+        "Units Added To Stock": units_added_to_stock,
+        "Ending Stock Units": inventory_units,
+        "Active E-Scooters": active_escooters,
+        "USD/TRY (Month)": usd_try_month,
+        "Inflation Rate (Month)": inflation_rate_month,
+        "Energy Buy Price (Month)": energy_buy_price_month,
+        "Energy Sell Price (Month)": energy_sell_price_month,
+        "Monthly kWh Sold": monthly_kwh_sold,
+        "Monthly Revenue": monthly_revenue,
+        "Monthly Energy Cost": monthly_energy_cost,
+        "Monthly Energy Gross Profit (NewCo)": monthly_energy_gp_newco,
+        "Monthly Motor Gross Profit": monthly_motor_gross_profit,
+        "Monthly CS24 Other Gross Profit": monthly_cs24_other_gp,
+        "Monthly Total Gross Profit": monthly_total_gross_profit,
+        "Required CS24": monthly_cs24_required,
+        "New CS24": monthly_new_cs24,
+        "CS24 CapEx Outflow": monthly_cs24_capex_outflow,
+        "Raw Material Cost": raw_material_cost_month,
+        "Total Personnel Cost": total_personnel_cost_month,
+        "Total OPEX": total_opex_month,
+        "Monthly EBITDA Proxy": monthly_ebitda_proxy,
+        "Monthly Interest Cost": monthly_interest_cost,
+        "Monthly Tax": monthly_tax,
+        "Monthly Net Income": monthly_net_income,
+        "Monthly Net Cash Flow": monthly_net_cash_flow,
+        "Cumulative Cash Balance": cumulative_cash,
+        "Raw Material Inventory": inventory_raw_material_value,
+        "Finished Goods Inventory": inventory_units,
+        "Installed CS24 Asset Value": installed_cs24_asset_value,
+        "Financing Liability": financing_liability,
+        "Equity Proxy": equity_proxy,
     })
 
-cash_df = pd.DataFrame(cash_rows)
+monthly_df = pd.DataFrame(results)
 
-# Annual roll-up
-cash_df["Year"] = ((cash_df["Month"] - 1) // 12) + 1
-
-annual_df = cash_df.groupby("Year", as_index=False).agg({
-    "Sold Motors": "sum",
-    "Active Motors": "last",
-    "Monthly kWh": "sum",
-    "Revenue": "sum",
-    "Energy Cost": "sum",
-    "Energy GP (NewCo)": "sum",
-    "Motor Gross Profit": "sum",
-    "CS24 Other GP": "sum",
-    "Total Gross Profit": "sum",
-    "Personnel Cost": "sum",
-    "Other OPEX": "sum",
-    "Rent/Admin": "sum",
-    "Marketing": "sum",
-    "G&A": "sum",
-    "EBITDA Proxy": "sum",
-    "Interest": "sum",
-    "Tax": "sum",
-    "Net Income": "sum",
-    "CapEx Outflow": "sum",
-    "Net Cash Flow": "sum",
-    "Cumulative Cash": "last",
+annual_df = monthly_df.groupby("Year", as_index=False).agg({
+    "Monthly Production Units": "sum",
+    "Units Sold": "sum",
+    "Active E-Scooters": "last",
+    "Monthly kWh Sold": "sum",
+    "Monthly Revenue": "sum",
+    "Monthly Energy Cost": "sum",
+    "Monthly Energy Gross Profit (NewCo)": "sum",
+    "Monthly Motor Gross Profit": "sum",
+    "Monthly CS24 Other Gross Profit": "sum",
+    "Monthly Total Gross Profit": "sum",
+    "Total Personnel Cost": "sum",
+    "Total OPEX": "sum",
+    "Monthly EBITDA Proxy": "sum",
+    "CS24 CapEx Outflow": "sum",
+    "Raw Material Cost": "sum",
+    "Monthly Net Cash Flow": "sum",
+    "Cumulative Cash Balance": "last",
     "Required CS24": "last",
-    "Assets - Installed CS24": "last",
-    "Liabilities - Financing": "last",
+    "Installed CS24 Asset Value": "last",
+    "Financing Liability": "last",
     "Equity Proxy": "last",
-    "Cash Balance": "last",
 })
 
-# IRR approximation over monthly cash flows converted from annual series
-irr_cashflows = [-0.0] + annual_df["Net Cash Flow"].tolist()
+# personnel monthly detail dataframe
+personnel_detail_df = pd.DataFrame(personnel_detail) if personnel_rule_rows else pd.DataFrame()
+
+# assumptions display table
+assumption_rows = [
+    ["Grace Period (Months)", grace_period_months, "Editable"],
+    ["Raw Material Required Before (Months)", raw_material_required_before_months, "Editable"],
+    ["Stock-In Rate %", stock_in_rate_pct_default, "Editable"],
+    ["Energy Buy Price (2025)", energy_buy_price_2025, "Editable"],
+    ["Energy Sell Price (2025)", energy_sell_price_2025, "Editable"],
+    ["Gross Margin Per kWh", gross_margin_per_kwh, "Calculated"],
+    ["NewCo Share %", newco_share_pct, "Editable"],
+    ["Franchise Share %", franchise_share_pct, "Calculated"],
+    ["Battery Slots Per CS24", battery_slots_per_cs24, "Editable"],
+    ["Battery kWh Each", battery_kwh_each, "Editable"],
+    ["Delivery SoC %", delivery_soc_pct, "Editable"],
+    ["Charging Cycle Per CS24", charging_cycle_per_cs24, "Editable"],
+    ["Total Battery kWh Per CS24", total_battery_kwh_per_cs24, "Calculated"],
+    ["Sellable kWh Per Cycle", sellable_kwh_per_cycle, "Calculated"],
+    ["Daily kWh Per CS24", daily_kwh_per_cs24, "Calculated"],
+    ["CS24 Hardware & Installation USD", cs24_hardware_installation_usd, "Editable"],
+    ["Battery USD Per kWh", battery_usd_per_kwh, "Editable"],
+    ["Down Payment %", down_payment_pct, "Editable"],
+    ["Battery Life (Years)", battery_life_years, "Editable"],
+    ["Tax Rate %", tax_rate_pct, "Editable"],
+    ["Wh Per Km", wh_per_km, "Editable"],
+    ["Active User % (Courier E-Scooter)", active_user_pct_courier_avg, "Override"],
+    ["Active User % (Commuter E-Scooter)", active_user_pct_commuter_avg, "Override"],
+    ["Heavy Duty User % (Courier Scooter)", heavy_duty_user_pct, "Override"],
+    ["Standard Duty User % (Courier Scooter)", standard_duty_user_pct, "Override"],
+    ["Light Duty User % (Courier Scooter)", light_duty_user_pct, "Override"],
+    ["Heavy Duty Km Per Day", heavy_duty_km_per_day, "Override"],
+    ["Standard Duty Km Per Day", standard_duty_km_per_day, "Override"],
+    ["Light Duty Km Per Day", light_duty_km_per_day, "Override"],
+    ["Weighted Avg Km Per Day (Courier E-Scooter)", weighted_avg_km_per_day_courier, "Calculated"],
+    ["Km Per Day (System Avg)", km_per_day_system_avg, "Calculated"],
+    ["kWh Per Motor Per Day", kwh_per_motor_per_day, "Calculated"],
+]
+assumptions_display_df = pd.DataFrame(assumption_rows, columns=["Parameter", "Value", "Type"])
 
 
-def npv(rate, cfs):
-    return sum(cf / ((1 + rate) ** i) for i, cf in enumerate(cfs))
+# =========================================================
+# DISPLAY FORMATTING
+# =========================================================
+
+assumptions_display_fmt = assumptions_display_df.copy()
+for i, row in assumptions_display_fmt.iterrows():
+    param = row["Parameter"]
+    val = row["Value"]
+    if "%" in param:
+        assumptions_display_fmt.at[i, "Value"] = fmt_pct(val)
+    elif "USD" in param:
+        assumptions_display_fmt.at[i, "Value"] = fmt_num(val)
+    elif "Price" in param or "Margin" in param:
+        assumptions_display_fmt.at[i, "Value"] = fmt_try(val)
+    else:
+        assumptions_display_fmt.at[i, "Value"] = fmt_num(val)
+
+dashboard_monthly_fmt = monthly_df.copy()
+currency_cols = [
+    "Monthly Revenue", "Monthly Energy Cost", "Monthly Energy Gross Profit (NewCo)",
+    "Monthly Motor Gross Profit", "Monthly CS24 Other Gross Profit", "Monthly Total Gross Profit",
+    "CS24 CapEx Outflow", "Raw Material Cost", "Total Personnel Cost", "Total OPEX",
+    "Monthly EBITDA Proxy", "Monthly Interest Cost", "Monthly Tax", "Monthly Net Income",
+    "Monthly Net Cash Flow", "Cumulative Cash Balance", "Raw Material Inventory",
+    "Installed CS24 Asset Value", "Financing Liability", "Equity Proxy"
+]
+num_cols = [
+    "Month", "Year", "Courier E-Scooter (Facelift) Units", "Courier E-Scooter (New) Units",
+    "Commuter E-Scooter Units", "Monthly Production Units", "Units Sold", "Units Added To Stock",
+    "Ending Stock Units", "Active E-Scooters", "USD/TRY (Month)", "Inflation Rate (Month)",
+    "Energy Buy Price (Month)", "Energy Sell Price (Month)", "Monthly kWh Sold", "Required CS24",
+    "New CS24", "Finished Goods Inventory"
+]
+pct_like_cols = []
+
+for c in currency_cols:
+    if c in dashboard_monthly_fmt.columns:
+        dashboard_monthly_fmt[c] = dashboard_monthly_fmt[c].map(fmt_try)
+for c in num_cols:
+    if c in dashboard_monthly_fmt.columns:
+        dashboard_monthly_fmt[c] = dashboard_monthly_fmt[c].map(fmt_num)
+
+annual_fmt = annual_df.copy()
+for c in annual_fmt.columns:
+    if c == "Year":
+        annual_fmt[c] = annual_fmt[c].map(fmt_num)
+    elif c in ["Monthly Production Units", "Units Sold", "Active E-Scooters", "Monthly kWh Sold", "Required CS24"]:
+        annual_fmt[c] = annual_fmt[c].map(fmt_num)
+    else:
+        annual_fmt[c] = annual_fmt[c].map(fmt_try)
+
+personnel_fmt = personnel_detail_df.copy()
+if not personnel_fmt.empty:
+    for c in ["Month", "Headcount"]:
+        if c in personnel_fmt.columns:
+            personnel_fmt[c] = personnel_fmt[c].map(fmt_num)
+    for c in ["Monthly Salary (Actual)", "Monthly Personnel Cost"]:
+        if c in personnel_fmt.columns:
+            personnel_fmt[c] = personnel_fmt[c].map(fmt_try)
+
+balance_monthly = monthly_df[[
+    "Month", "Cumulative Cash Balance", "Raw Material Inventory", "Finished Goods Inventory",
+    "Installed CS24 Asset Value", "Financing Liability", "Equity Proxy"
+]].copy()
+
+balance_fmt = balance_monthly.copy()
+for c in balance_fmt.columns:
+    if c == "Month":
+        balance_fmt[c] = balance_fmt[c].map(fmt_num)
+    else:
+        if c == "Finished Goods Inventory":
+            balance_fmt[c] = balance_fmt[c].map(fmt_num)
+        else:
+            balance_fmt[c] = balance_fmt[c].map(fmt_try)
 
 
-def irr_bisect(cfs, low=-0.99, high=10.0, iterations=300):
-    try:
-        f_low = npv(low, cfs)
-        f_high = npv(high, cfs)
-        if f_low * f_high > 0:
-            return None
-        for _ in range(iterations):
-            mid = (low + high) / 2
-            f_mid = npv(mid, cfs)
-            if abs(f_mid) < 1e-8:
-                return mid
-            if f_low * f_mid <= 0:
-                high = mid
-                f_high = f_mid
-            else:
-                low = mid
-                f_low = f_mid
-        return mid
-    except Exception:
-        return None
-
-
-annual_irr = irr_bisect(irr_cashflows)
-min_cash = cash_df["Cumulative Cash"].min()
-breakeven_month = None
-positive_months = cash_df[cash_df["Cumulative Cash"] >= 0]
-if not positive_months.empty:
-    breakeven_month = int(positive_months.iloc[0]["Month"])
-
-roi_cs24 = None
-if company_financed_per_cs24_try > 0:
-    annual_energy_gp_per_cs24 = monthly_kwh_per_cs24 * company_margin_per_kwh * 12
-    annual_other_gp_per_cs24 = cs24_other_gross_profit_usd * usdtry
-    annual_net_per_cs24 = annual_energy_gp_per_cs24 + annual_other_gp_per_cs24 - (20000 + 0)
-    roi_cs24 = annual_net_per_cs24 / company_financed_per_cs24_try
-
-
-# --------------------------------------------------
+# =========================================================
 # TABS
-# --------------------------------------------------
+# =========================================================
 
 tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
     "Investor Dashboard",
     "Assumptions",
-    "Monthly Cash Flow",
-    "Income Statement",
-    "Balance Sheet",
+    "Monthly Financials",
+    "Monthly Balance Sheet",
+    "Personnel",
     "Excel Preview",
 ])
-
-# --------------------------------------------------
-# TAB 1 - DASHBOARD
-# --------------------------------------------------
 
 with tab1:
     st.subheader("Investor Dashboard")
 
+    last_row = monthly_df.iloc[-1]
+
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Y4 Total Revenue", fmt_try(annual_df.iloc[-1]["Revenue"]))
-    c2.metric("Y4 EBITDA Proxy", fmt_try(annual_df.iloc[-1]["EBITDA Proxy"]))
-    c3.metric("Lowest Cash Balance", fmt_try(min_cash))
-    c4.metric("Break-even Month", "-" if breakeven_month is None else breakeven_month)
+    c1.metric("Final Active E-Scooters", fmt_num(last_row["Active E-Scooters"]))
+    c2.metric("Final Monthly kWh Sold", fmt_num(last_row["Monthly kWh Sold"]))
+    c3.metric("Final Monthly Revenue", fmt_try(last_row["Monthly Revenue"]))
+    c4.metric("Final Monthly EBITDA Proxy", fmt_try(last_row["Monthly EBITDA Proxy"]))
 
     c5, c6, c7, c8 = st.columns(4)
-    c5.metric("Y4 Active Motors", fmt_num(annual_df.iloc[-1]["Active Motors"]))
-    c6.metric("Y4 Required CS24", fmt_num(annual_df.iloc[-1]["Required CS24"]))
-    c7.metric("CS24 ROI", "-" if roi_cs24 is None else fmt_pct(roi_cs24))
-    c8.metric("Project IRR", "-" if annual_irr is None else fmt_pct(annual_irr))
+    c5.metric("Final Required CS24", fmt_num(last_row["Required CS24"]))
+    c6.metric("Final Cumulative Cash", fmt_try(last_row["Cumulative Cash Balance"]))
+    c7.metric("Raw Material Lag", fmt_num(raw_material_required_before_months))
+    c8.metric("Stock-In Rate", fmt_pct(stock_in_rate_pct_default))
 
-    st.markdown("### 4-Year Summary")
-    view_cols = [
-        "Year", "Sold Motors", "Active Motors", "Monthly kWh", "Revenue",
-        "Total Gross Profit", "EBITDA Proxy", "CapEx Outflow", "Net Cash Flow", "Cumulative Cash"
-    ]
-    annual_display = annual_df[view_cols].copy()
-    annual_display.rename(columns={"Monthly kWh": "Annual kWh"}, inplace=True)
-    st.dataframe(annual_display, use_container_width=True)
+    st.markdown("### Annual Summary")
+    st.dataframe(annual_fmt, use_container_width=True, hide_index=True)
 
-    st.markdown("### Key Trend Charts")
-    st.line_chart(annual_df.set_index("Year")[["Revenue", "EBITDA Proxy", "Net Cash Flow"]])
-    st.line_chart(annual_df.set_index("Year")[["Active Motors", "Required CS24"]])
-
-# --------------------------------------------------
-# TAB 2 - ASSUMPTIONS
-# --------------------------------------------------
+    st.markdown("### Monthly Trend")
+    st.line_chart(monthly_df.set_index("Month")[["Monthly Revenue", "Monthly EBITDA Proxy", "Monthly Net Cash Flow"]])
 
 with tab2:
     st.subheader("Assumptions")
 
-    assumptions = pd.DataFrame({
-        "Parameter": [
-            "Base Fleet",
-            "Km per Day",
-            "Wh per km",
-            "Daily kWh per Motor",
-            "Battery Slots per CS24",
-            "Battery kWh Each",
-            "Total Battery kWh per CS24",
-            "Delivery SoC",
-            "Sellable kWh per Cycle",
-            "Charging Cycle per CS24",
-            "Daily kWh per CS24",
-            "Buy Price",
-            "Sell Price",
-            "Gross Margin per kWh",
-            "NewCo Share",
-            "Franchise Share",
-            "NewCo Margin per kWh",
-            "CS24 Hardware USD",
-            "Battery USD per kWh",
-            "USDTRY",
-            "CS24 Total CapEx TRY",
-            "Down Payment %",
-            "Company Financed per CS24",
-            "Grace Period Months",
-            "Battery Life Years",
-            "Tax Rate",
-        ],
-        "Value": [
-            fleet_base,
-            daily_km,
-            wh_per_km,
-            daily_kwh_per_motor,
-            battery_slots,
-            battery_kwh_each,
-            cs24_total_battery_kwh,
-            delivery_soc,
-            sellable_kwh_per_cycle,
-            cycle_per_cs24,
-            daily_kwh_per_cs24,
-            buy_price,
-            sell_price,
-            gross_margin_per_kwh,
-            company_share,
-            franchise_share,
-            company_margin_per_kwh,
-            cs24_hardware_usd,
-            battery_usd_per_kwh,
-            usdtry,
-            cs24_total_capex_try,
-            down_payment_pct,
-            company_financed_per_cs24_try,
-            grace_period_months,
-            battery_life_years,
-            tax_rate,
-        ]
-    })
-    st.dataframe(assumptions, use_container_width=True)
-
-    st.markdown("### Excel Sheets Found")
-    if sheet_check_ok:
-        st.write(excel.sheet_names)
-    else:
-        st.info("No valid Excel loaded yet.")
-
-# --------------------------------------------------
-# TAB 3 - MONTHLY CASH FLOW
-# --------------------------------------------------
+    st.dataframe(assumptions_display_fmt, use_container_width=True, hide_index=True)
+    st.caption("Editable, Override and Calculated rows are shown in one table. Calculated rows are formula-driven and not directly editable.")
 
 with tab3:
-    st.subheader("Monthly Cash Flow")
-    st.dataframe(cash_df, use_container_width=True)
-    st.line_chart(cash_df.set_index("Month")[["Net Cash Flow", "Cumulative Cash"]])
+    st.subheader("Monthly Financials")
+    st.dataframe(dashboard_monthly_fmt, use_container_width=True, hide_index=True)
 
-# --------------------------------------------------
-# TAB 4 - INCOME STATEMENT
-# --------------------------------------------------
+    st.markdown("### Monthly Revenue / EBITDA / Net Cash Flow")
+    st.line_chart(monthly_df.set_index("Month")[["Monthly Revenue", "Monthly EBITDA Proxy", "Monthly Net Cash Flow"]])
 
 with tab4:
-    st.subheader("Income Statement (Annual)")
+    st.subheader("Monthly Balance Sheet")
+    st.dataframe(balance_fmt, use_container_width=True, hide_index=True)
 
-    income_statement = annual_df[[
-        "Year", "Revenue", "Energy Cost", "Energy GP (NewCo)", "Motor Gross Profit",
-        "CS24 Other GP", "Total Gross Profit", "Personnel Cost", "Other OPEX",
-        "Rent/Admin", "Marketing", "G&A", "EBITDA Proxy", "Interest", "Tax", "Net Income"
-    ]].copy()
-
-    st.dataframe(income_statement, use_container_width=True)
-    st.bar_chart(income_statement.set_index("Year")[["Revenue", "EBITDA Proxy", "Net Income"]])
-
-# --------------------------------------------------
-# TAB 5 - BALANCE SHEET
-# --------------------------------------------------
+    st.markdown("### Balance Sheet Trend")
+    st.line_chart(balance_monthly.set_index("Month")[[
+        "Cumulative Cash Balance", "Raw Material Inventory",
+        "Installed CS24 Asset Value", "Financing Liability", "Equity Proxy"
+    ]])
 
 with tab5:
-    st.subheader("Balance Sheet (Annual Ending)")
-
-    balance_sheet = annual_df[[
-        "Year", "Cash Balance", "Assets - Installed CS24", "Liabilities - Financing", "Equity Proxy"
-    ]].copy()
-
-    balance_sheet.rename(columns={
-        "Cash Balance": "Cash",
-        "Assets - Installed CS24": "Fixed Assets Proxy",
-        "Liabilities - Financing": "Financing Liability",
-        "Equity Proxy": "Equity Proxy"
-    }, inplace=True)
-
-    st.dataframe(balance_sheet, use_container_width=True)
-    st.line_chart(balance_sheet.set_index("Year")[["Cash", "Fixed Assets Proxy", "Financing Liability", "Equity Proxy"]])
-
-# --------------------------------------------------
-# TAB 6 - EXCEL PREVIEW
-# --------------------------------------------------
+    st.subheader("Personnel Monthly View")
+    if personnel_fmt.empty:
+        st.info("No personnel data available.")
+    else:
+        st.dataframe(personnel_fmt, use_container_width=True, hide_index=True)
 
 with tab6:
     st.subheader("Excel Preview")
 
-    if params_df is not None:
-        st.markdown("### Main Parameters")
-        st.dataframe(params_df, use_container_width=True)
+    if assumptions_df is not None:
+        st.markdown("### Assumptions")
+        st.dataframe(assumptions_df, use_container_width=True)
 
-    if personnel_df is not None:
-        st.markdown("### Personnel")
-        st.dataframe(personnel_df, use_container_width=True)
+    if monthly_inputs_df is not None:
+        st.markdown("### Monthly Inputs")
+        st.dataframe(monthly_inputs_df, use_container_width=True)
+
+    if macro_df is not None:
+        st.markdown("### Macro Assumptions")
+        st.dataframe(macro_df, use_container_width=True)
+
+    if opex_df is not None:
+        st.markdown("### OPEX")
+        st.dataframe(opex_df, use_container_width=True)
+
+    if personnel_base_df is not None:
+        st.markdown("### Personnel Base")
+        st.dataframe(personnel_base_df, use_container_width=True)
+
+    if personnel_rules_df is not None:
+        st.markdown("### Personnel Monthly Rules")
+        st.dataframe(personnel_rules_df, use_container_width=True)
 
     if bom_df is not None:
         st.markdown("### BoM List")
         st.dataframe(bom_df, use_container_width=True)
 
-    if cashflow_df is not None:
+    if product_capex_df is not None:
+        st.markdown("### Product CapEx")
+        st.dataframe(product_capex_df, use_container_width=True)
+
+    if cashflow_sheet_df is not None:
         st.markdown("### Cash Flow Statement")
-        st.dataframe(cashflow_df, use_container_width=True)
+        st.dataframe(cashflow_sheet_df, use_container_width=True)
