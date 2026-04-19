@@ -4,7 +4,7 @@ from io import BytesIO
 import pandas as pd
 import streamlit as st
 
-st.set_page_config(page_title="HOKO Mobility Financial Copilot v04.2", layout="wide")
+st.set_page_config(page_title="HOKO Mobility Financial Copilot v04.3", layout="wide")
 
 
 # =========================================================
@@ -170,8 +170,6 @@ def make_template_excel():
         "Notes": ["", "", ""],
     })
 
-    cashflow = pd.DataFrame({"Month": list(range(1, 49)), "Notes": [""] * 48})
-
     bio = BytesIO()
     with pd.ExcelWriter(bio, engine="openpyxl") as writer:
         assumptions.to_excel(writer, sheet_name="Assumptions", index=False)
@@ -182,7 +180,6 @@ def make_template_excel():
         personnel_rules.to_excel(writer, sheet_name="Personnel Monthly Rules", index=False)
         bom.to_excel(writer, sheet_name="BoM List", index=False)
         product_capex.to_excel(writer, sheet_name="Product CapEx", index=False)
-        cashflow.to_excel(writer, sheet_name="Cash Flow Statement", index=False)
 
     bio.seek(0)
     return bio.getvalue()
@@ -230,7 +227,7 @@ def get_macro_value(macro_df, year, half, field_base):
 # HEADER
 # =========================================================
 
-st.title("HOKO Mobility Financial Copilot v04.2")
+st.title("HOKO Mobility Financial Copilot v04.3")
 st.caption("Excel-Driven, Multi-Product, Monthly Financial Model")
 
 with st.expander("Excel Upload Instructions", expanded=True):
@@ -246,13 +243,14 @@ Required sheets:
 6. Personnel Monthly Rules
 7. BoM List
 8. Product CapEx
-9. Cash Flow Statement
+
+Cash Flow Statement and Balance Sheet are generated inside the app.
 """)
 
 st.download_button(
     "Download Template Excel",
     data=make_template_excel(),
-    file_name="HOKO_BP_Template_v04_2.xlsx",
+    file_name="HOKO_BP_Template_v04_3.xlsx",
     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 )
 
@@ -271,7 +269,6 @@ personnel_base_df = None
 personnel_rules_df = None
 bom_df = None
 product_capex_df = None
-cashflow_sheet_df = None
 
 if uploaded_file is not None:
     try:
@@ -285,7 +282,6 @@ if uploaded_file is not None:
             "Personnel Monthly Rules",
             "BoM List",
             "Product CapEx",
-            "Cash Flow Statement",
         ]
         missing = [s for s in required if s not in xls.sheet_names]
         if missing:
@@ -299,7 +295,6 @@ if uploaded_file is not None:
             personnel_rules_df = pd.read_excel(xls, "Personnel Monthly Rules")
             bom_df = pd.read_excel(xls, "BoM List")
             product_capex_df = pd.read_excel(xls, "Product CapEx")
-            cashflow_sheet_df = pd.read_excel(xls, "Cash Flow Statement")
             st.success("Excel uploaded successfully.")
     except Exception as e:
         st.error(f"Excel could not be read: {e}")
@@ -337,7 +332,7 @@ base_light_duty_km_per_day = safe_float(get_param_value(assumptions_df, "Light D
 
 
 # =========================================================
-# ASSUMPTIONS EDITORS
+# ASSUMPTIONS
 # =========================================================
 
 st.markdown("## Assumptions")
@@ -382,7 +377,6 @@ with st.expander("Override Assumptions", expanded=True):
         standard_duty_km_per_day = st.text_input("Standard Duty Km Per Day", value=str(up_int(base_standard_duty_km_per_day)))
         light_duty_km_per_day = st.text_input("Light Duty Km Per Day", value=str(up_int(base_light_duty_km_per_day)))
 
-# convert override strings
 active_user_pct_courier_avg = safe_int(active_user_pct_courier_avg, up_int(base_active_user_pct_courier))
 active_user_pct_commuter_avg = safe_int(active_user_pct_commuter_avg, up_int(base_active_user_pct_commuter))
 heavy_duty_user_pct = safe_int(heavy_duty_user_pct, up_int(base_heavy_duty_user_pct))
@@ -450,11 +444,6 @@ if personnel_rules_df is not None and not personnel_rules_df.empty:
 # =========================================================
 # PRODUCT MAPS
 # =========================================================
-
-product_capex_map = {}
-if product_capex_df is not None and not product_capex_df.empty:
-    for _, row in product_capex_df.iterrows():
-        product_capex_map[str(row["Product"]).strip()] = safe_float(row["CapEx Per Unit USD"], 0)
 
 bom_monthly_usd_per_product = {}
 if bom_df is not None and not bom_df.empty:
@@ -715,6 +704,36 @@ annual_df = monthly_df.groupby("Year", as_index=False).agg({
 
 personnel_detail_df = pd.DataFrame(personnel_records) if personnel_records else pd.DataFrame()
 
+cash_flow_df = monthly_df[[
+    "Month",
+    "Monthly Revenue",
+    "Monthly Energy Cost",
+    "Monthly Energy Gross Profit (NewCo)",
+    "Monthly Motor Gross Profit",
+    "Monthly CS24 Other Gross Profit",
+    "Monthly Total Gross Profit",
+    "Total Personnel Cost",
+    "Total OPEX",
+    "Monthly EBITDA Proxy",
+    "CS24 CapEx Outflow",
+    "Raw Material Cost",
+    "Monthly Interest Cost",
+    "Monthly Tax",
+    "Monthly Net Income",
+    "Monthly Net Cash Flow",
+    "Cumulative Cash Balance",
+]].copy()
+
+balance_sheet_df = monthly_df[[
+    "Month",
+    "Cumulative Cash Balance",
+    "Raw Material Inventory",
+    "Finished Goods Inventory",
+    "Installed CS24 Asset Value",
+    "Financing Liability",
+    "Equity Proxy",
+]].copy()
+
 assumption_rows = [
     ["Grace Period (Months)", grace_period_months, "Editable"],
     ["Raw Material Required Before (Months)", raw_material_required_before_months, "Editable"],
@@ -823,22 +842,26 @@ if not personnel_fmt.empty:
     for c in personnel_fmt.columns:
         personnel_fmt[c] = personnel_fmt[c].astype(object)
 
-    for c in ["Month", "Headcount"]:
-        if c == "Month":
-            personnel_fmt[c] = personnel_fmt[c].map(fmt_plain_int)
-        elif c in personnel_fmt.columns:
-            personnel_fmt[c] = personnel_fmt[c].map(fmt_num)
+    if "Month" in personnel_fmt.columns:
+        personnel_fmt["Month"] = personnel_fmt["Month"].map(fmt_plain_int)
+    if "Headcount" in personnel_fmt.columns:
+        personnel_fmt["Headcount"] = personnel_fmt["Headcount"].map(fmt_num)
+    if "Monthly Salary (Actual)" in personnel_fmt.columns:
+        personnel_fmt["Monthly Salary (Actual)"] = personnel_fmt["Monthly Salary (Actual)"].map(fmt_try)
+    if "Monthly Personnel Cost" in personnel_fmt.columns:
+        personnel_fmt["Monthly Personnel Cost"] = personnel_fmt["Monthly Personnel Cost"].map(fmt_try)
 
-    for c in ["Monthly Salary (Actual)", "Monthly Personnel Cost"]:
-        if c in personnel_fmt.columns:
-            personnel_fmt[c] = personnel_fmt[c].map(fmt_try)
+cash_flow_fmt = cash_flow_df.copy()
+for c in cash_flow_fmt.columns:
+    cash_flow_fmt[c] = cash_flow_fmt[c].astype(object)
 
-balance_monthly = monthly_df[[
-    "Month", "Cumulative Cash Balance", "Raw Material Inventory", "Finished Goods Inventory",
-    "Installed CS24 Asset Value", "Financing Liability", "Equity Proxy"
-]].copy()
+for c in cash_flow_fmt.columns:
+    if c == "Month":
+        cash_flow_fmt[c] = cash_flow_fmt[c].map(fmt_plain_int)
+    else:
+        cash_flow_fmt[c] = cash_flow_fmt[c].map(fmt_try)
 
-balance_fmt = balance_monthly.copy()
+balance_fmt = balance_sheet_df.copy()
 for c in balance_fmt.columns:
     balance_fmt[c] = balance_fmt[c].astype(object)
 
@@ -855,11 +878,12 @@ for c in balance_fmt.columns:
 # TABS
 # =========================================================
 
-tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
     "Investor Dashboard",
     "Assumptions",
     "Monthly Financials",
-    "Monthly Balance Sheet",
+    "Cash Flow Statement",
+    "Balance Sheet",
     "Personnel",
     "Excel Preview",
 ])
@@ -890,7 +914,7 @@ with tab1:
 with tab2:
     st.subheader("Assumptions")
     st.dataframe(assumptions_display_fmt, use_container_width=True, hide_index=True)
-    st.caption("Editable rows are changed with arrows. Override rows are changed via text inputs above. Calculated rows are formula-driven and read-only.")
+    st.caption("Editable rows are changed with arrows. Override rows are changed via text inputs. Calculated rows are formula-driven and read-only.")
 
 with tab3:
     st.subheader("Monthly Financials")
@@ -900,23 +924,30 @@ with tab3:
     st.line_chart(monthly_df.set_index("Month")[["Monthly Revenue", "Monthly EBITDA Proxy", "Monthly Net Cash Flow"]])
 
 with tab4:
-    st.subheader("Monthly Balance Sheet")
+    st.subheader("Cash Flow Statement")
+    st.dataframe(cash_flow_fmt, use_container_width=True, hide_index=True)
+
+    st.markdown("### Cash Flow Trend")
+    st.line_chart(cash_flow_df.set_index("Month")[["Monthly Net Cash Flow", "Cumulative Cash Balance"]])
+
+with tab5:
+    st.subheader("Balance Sheet")
     st.dataframe(balance_fmt, use_container_width=True, hide_index=True)
 
     st.markdown("### Balance Sheet Trend")
-    st.line_chart(balance_monthly.set_index("Month")[[
+    st.line_chart(balance_sheet_df.set_index("Month")[[
         "Cumulative Cash Balance", "Raw Material Inventory",
         "Installed CS24 Asset Value", "Financing Liability", "Equity Proxy"
     ]])
 
-with tab5:
+with tab6:
     st.subheader("Personnel Monthly View")
     if personnel_fmt.empty:
         st.info("No personnel data available.")
     else:
         st.dataframe(personnel_fmt, use_container_width=True, hide_index=True)
 
-with tab6:
+with tab7:
     st.subheader("Excel Preview")
 
     if assumptions_df is not None:
@@ -950,7 +981,3 @@ with tab6:
     if product_capex_df is not None:
         st.markdown("### Product CapEx")
         st.dataframe(product_capex_df, use_container_width=True)
-
-    if cashflow_sheet_df is not None:
-        st.markdown("### Cash Flow Statement")
-        st.dataframe(cashflow_sheet_df, use_container_width=True)
