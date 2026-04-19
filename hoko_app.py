@@ -4,7 +4,7 @@ from io import BytesIO
 import pandas as pd
 import streamlit as st
 
-st.set_page_config(page_title="HOKO Mobility Financial Copilot v04", layout="wide")
+st.set_page_config(page_title="HOKO Mobility Financial Copilot v04.1", layout="wide")
 
 
 # =========================================================
@@ -224,7 +224,7 @@ def get_macro_value(macro_df, year, half, field_base):
 # PAGE HEADER
 # =========================================================
 
-st.title("HOKO Mobility Financial Copilot v04")
+st.title("HOKO Mobility Financial Copilot v04.1")
 st.caption("Excel-Driven, Multi-Product, Monthly Financial Model")
 
 with st.expander("Excel Upload Instructions", expanded=True):
@@ -343,7 +343,6 @@ if duty_pct_total != 100:
 # BASE PARAMETERS
 # =========================================================
 
-# from assumptions or defaults
 grace_period_months = safe_int(get_param_value(assumptions_df, "Grace Period (Months)", 5))
 raw_material_required_before_months = safe_int(get_param_value(assumptions_df, "Raw Material Required Before (Months)", 3))
 stock_in_rate_pct_default = safe_float(get_param_value(assumptions_df, "Stock-In Rate %", 10))
@@ -361,7 +360,6 @@ battery_life_years = safe_int(get_param_value(assumptions_df, "Battery Life (Yea
 tax_rate_pct = safe_float(get_param_value(assumptions_df, "Tax Rate %", 20))
 wh_per_km = safe_float(get_param_value(assumptions_df, "Wh Per Km", 40))
 
-# usage overrides from dashboard
 heavy_duty_km_per_day = override_heavy_km
 standard_duty_km_per_day = override_standard_km
 light_duty_km_per_day = override_light_km
@@ -387,7 +385,6 @@ total_battery_kwh_per_cs24 = math.ceil(battery_slots_per_cs24 * battery_kwh_each
 sellable_kwh_per_cycle = math.ceil(total_battery_kwh_per_cs24 * delivery_soc_pct / 100)
 daily_kwh_per_cs24 = math.ceil(sellable_kwh_per_cycle * charging_cycle_per_cs24)
 
-# commuter assumption: use a simple default if not otherwise provided
 commuter_km_per_day = 35
 
 km_per_day_system_avg = math.ceil(
@@ -481,8 +478,8 @@ inventory_raw_material_value = 0
 active_escooters = 0
 installed_cs24 = 0
 cumulative_cash = 0
+personnel_records = []
 
-# pre-build raw material schedule
 raw_material_purchase_schedule = {m: 0 for m in range(1, 49)}
 
 for _, row in monthly_inputs_df.iterrows():
@@ -511,11 +508,8 @@ for _, row in monthly_inputs_df.iterrows():
     units_sold_month = monthly_production_units - units_added_to_stock
 
     inventory_units = inventory_units + units_added_to_stock
-
-    # active users monthly ratios from Excel, but dashboard annual override dominates system avg usage
     active_escooters += units_sold_month
 
-    # monthly prices from macro
     energy_buy_price_month = math.ceil(
         energy_buy_price_2025 * (1 + inflation_rate_month / 100)
     )
@@ -534,7 +528,6 @@ for _, row in monthly_inputs_df.iterrows():
 
     monthly_motor_gross_profit = math.ceil(units_sold_month * 80000)
 
-    # CS24
     monthly_cs24_required = math.ceil((active_escooters * kwh_per_motor_per_day) / max(1, daily_kwh_per_cs24))
     monthly_new_cs24 = max(0, monthly_cs24_required - installed_cs24)
     installed_cs24 = monthly_cs24_required
@@ -547,7 +540,6 @@ for _, row in monthly_inputs_df.iterrows():
 
     monthly_cs24_other_gp = math.ceil(installed_cs24 * ((1200 * usd_try_month) / 12))
 
-    # raw material logic with lag and stock slow-down
     bom_usd_total = (
         courier_facelift_units * bom_monthly_usd_per_product.get("Courier E-Scooter (Facelift)", 0)
         + courier_new_units * bom_monthly_usd_per_product.get("Courier E-Scooter (New)", 0)
@@ -565,9 +557,7 @@ for _, row in monthly_inputs_df.iterrows():
     raw_material_cost_month = raw_material_purchase_schedule.get(month_no, 0)
     inventory_raw_material_value = max(0, inventory_raw_material_value + raw_material_cost_month - adjusted_raw_material_need_try)
 
-    # personnel
     total_personnel_cost_month = 0
-    personnel_detail = []
 
     for pr in personnel_rule_rows:
         role = pr["Role"]
@@ -587,7 +577,7 @@ for _, row in monthly_inputs_df.iterrows():
 
         total_personnel_cost_month += monthly_personnel_cost
 
-        personnel_detail.append({
+        personnel_records.append({
             "Month": month_no,
             "Role": role,
             "Headcount": headcount,
@@ -595,7 +585,6 @@ for _, row in monthly_inputs_df.iterrows():
             "Monthly Personnel Cost": monthly_personnel_cost,
         })
 
-    # opex
     total_opex_month = 0
     if opex_df is not None and not opex_df.empty:
         for _, orow in opex_df.iterrows():
@@ -700,10 +689,8 @@ annual_df = monthly_df.groupby("Year", as_index=False).agg({
     "Equity Proxy": "last",
 })
 
-# personnel monthly detail dataframe
-personnel_detail_df = pd.DataFrame(personnel_detail) if personnel_rule_rows else pd.DataFrame()
+personnel_detail_df = pd.DataFrame(personnel_records) if personnel_records else pd.DataFrame()
 
-# assumptions display table
 assumption_rows = [
     ["Grace Period (Months)", grace_period_months, "Editable"],
     ["Raw Material Required Before (Months)", raw_material_required_before_months, "Editable"],
@@ -742,13 +729,17 @@ assumptions_display_df = pd.DataFrame(assumption_rows, columns=["Parameter", "Va
 
 
 # =========================================================
-# DISPLAY FORMATTING
+# DISPLAY FORMATTING (FIXED)
 # =========================================================
 
 assumptions_display_fmt = assumptions_display_df.copy()
+assumptions_display_fmt["Value"] = assumptions_display_fmt["Value"].astype(object)
+assumptions_display_fmt["Type"] = assumptions_display_fmt["Type"].astype(object)
+
 for i, row in assumptions_display_fmt.iterrows():
-    param = row["Parameter"]
+    param = str(row["Parameter"])
     val = row["Value"]
+
     if "%" in param:
         assumptions_display_fmt.at[i, "Value"] = fmt_pct(val)
     elif "USD" in param:
@@ -759,6 +750,9 @@ for i, row in assumptions_display_fmt.iterrows():
         assumptions_display_fmt.at[i, "Value"] = fmt_num(val)
 
 dashboard_monthly_fmt = monthly_df.copy()
+for c in dashboard_monthly_fmt.columns:
+    dashboard_monthly_fmt[c] = dashboard_monthly_fmt[c].astype(object)
+
 currency_cols = [
     "Monthly Revenue", "Monthly Energy Cost", "Monthly Energy Gross Profit (NewCo)",
     "Monthly Motor Gross Profit", "Monthly CS24 Other Gross Profit", "Monthly Total Gross Profit",
@@ -774,16 +768,19 @@ num_cols = [
     "Energy Buy Price (Month)", "Energy Sell Price (Month)", "Monthly kWh Sold", "Required CS24",
     "New CS24", "Finished Goods Inventory"
 ]
-pct_like_cols = []
 
 for c in currency_cols:
     if c in dashboard_monthly_fmt.columns:
         dashboard_monthly_fmt[c] = dashboard_monthly_fmt[c].map(fmt_try)
+
 for c in num_cols:
     if c in dashboard_monthly_fmt.columns:
         dashboard_monthly_fmt[c] = dashboard_monthly_fmt[c].map(fmt_num)
 
 annual_fmt = annual_df.copy()
+for c in annual_fmt.columns:
+    annual_fmt[c] = annual_fmt[c].astype(object)
+
 for c in annual_fmt.columns:
     if c == "Year":
         annual_fmt[c] = annual_fmt[c].map(fmt_num)
@@ -794,6 +791,9 @@ for c in annual_fmt.columns:
 
 personnel_fmt = personnel_detail_df.copy()
 if not personnel_fmt.empty:
+    for c in personnel_fmt.columns:
+        personnel_fmt[c] = personnel_fmt[c].astype(object)
+
     for c in ["Month", "Headcount"]:
         if c in personnel_fmt.columns:
             personnel_fmt[c] = personnel_fmt[c].map(fmt_num)
@@ -808,13 +808,15 @@ balance_monthly = monthly_df[[
 
 balance_fmt = balance_monthly.copy()
 for c in balance_fmt.columns:
+    balance_fmt[c] = balance_fmt[c].astype(object)
+
+for c in balance_fmt.columns:
     if c == "Month":
         balance_fmt[c] = balance_fmt[c].map(fmt_num)
+    elif c == "Finished Goods Inventory":
+        balance_fmt[c] = balance_fmt[c].map(fmt_num)
     else:
-        if c == "Finished Goods Inventory":
-            balance_fmt[c] = balance_fmt[c].map(fmt_num)
-        else:
-            balance_fmt[c] = balance_fmt[c].map(fmt_try)
+        balance_fmt[c] = balance_fmt[c].map(fmt_try)
 
 
 # =========================================================
@@ -855,7 +857,6 @@ with tab1:
 
 with tab2:
     st.subheader("Assumptions")
-
     st.dataframe(assumptions_display_fmt, use_container_width=True, hide_index=True)
     st.caption("Editable, Override and Calculated rows are shown in one table. Calculated rows are formula-driven and not directly editable.")
 
