@@ -3,8 +3,9 @@ from io import BytesIO
 
 import pandas as pd
 import streamlit as st
+import openpyxl
 
-st.set_page_config(page_title="HOKO Mobility Financial Copilot v04.3", layout="wide")
+st.set_page_config(page_title="HOKO Mobility Financial Copilot v05", layout="wide")
 
 
 # =========================================================
@@ -15,6 +16,24 @@ def up_int(x):
     if pd.isna(x):
         return 0
     return int(math.ceil(float(x)))
+
+
+def safe_float(x, default=0.0):
+    try:
+        if x is None or pd.isna(x):
+            return default
+        return float(x)
+    except Exception:
+        return default
+
+
+def safe_int(x, default=0):
+    try:
+        if x is None or pd.isna(x):
+            return default
+        return int(math.ceil(float(x)))
+    except Exception:
+        return default
 
 
 def fmt_num(x):
@@ -33,22 +52,13 @@ def fmt_plain_int(x):
     return str(up_int(x))
 
 
-def safe_float(x, default=0.0):
-    try:
-        if pd.isna(x):
-            return default
-        return float(x)
-    except Exception:
-        return default
-
-
-def safe_int(x, default=0):
-    try:
-        if pd.isna(x):
-            return default
-        return int(math.ceil(float(x)))
-    except Exception:
-        return default
+def is_yellow_fill(cell):
+    if cell.fill is None or cell.fill.fill_type is None:
+        return False
+    rgb = cell.fill.fgColor.rgb
+    if rgb is None:
+        return False
+    return str(rgb).upper() in ["FFFFFF00", "FFFF00"]
 
 
 # =========================================================
@@ -56,50 +66,54 @@ def safe_int(x, default=0):
 # =========================================================
 
 def make_template_excel():
-    assumptions = pd.DataFrame({
-        "Parameter": [
-            "Grace Period (Months)",
-            "Raw Material Required Before (Months)",
-            "Stock-In Rate %",
-            "Energy Buy Price (2025)",
-            "Energy Sell Price (2025)",
-            "NewCo Share %",
-            "Battery Slots Per CS24",
-            "Battery kWh Each",
-            "Delivery SoC %",
-            "Charging Cycle Per CS24",
-            "CS24 Hardware & Installation USD",
-            "Battery USD Per kWh",
-            "Down Payment %",
-            "Battery Life (Years)",
-            "Tax Rate %",
-            "Wh Per Km",
-            "Active User % (Courier E-Scooter)",
-            "Active User % (Commuter E-Scooter)",
-            "Heavy Duty User % (Courier Scooter)",
-            "Standard Duty User % (Courier Scooter)",
-            "Light Duty User % (Courier Scooter)",
-            "Heavy Duty Km Per Day",
-            "Standard Duty Km Per Day",
-            "Light Duty Km Per Day",
-        ],
-        "Value": [
-            5, 3, 10, 3.5, 15, 40, 24, 3.24, 85, 2, 5000, 200, 25, 8, 20, 40,
-            70, 30, 40, 40, 20, 180, 140, 100
-        ]
-    })
+    assumptions_rows = [
+        ["", None, "Production Assumptions"],
+        ["", 1, "Grace Period (Months)"],
+        ["", 2, "Raw Material Required Before (Months)"],
+        ["", 10, "Stock-In Rate %"],
+        ["", None, "e-Scooter Assumptions"],
+        ["", 200, "Battery Cost Per kWh (USD)"],
+        ["", 3.24, "Battery kWh Each"],
+        ["", 2, "Battery Per e-Scooter"],
+        ["", 40.0, "Wh Consumption Per Km"],
+        ["", 8, "Battery Life (Years)"],
+        ["", None, "Charging Station Assumptions"],
+        ["", 5000, "CS24 Hardware & Installation Cost (USD)"],
+        ["", 25, "Franchisee Down Payment %"],
+        ["", 0, "Franchisee Investment per CS24 (Calculated)"],
+        ["", 3.5, "Energy Buy Price (TRY - 2026)"],
+        ["", 15.0, "Energy Sell Price (TRY - 2026)"],
+        ["", 0, "Gross Profit (TRY) (Calculated)"],
+        ["", 60, "Franchesee Share %"],
+        ["", 24, "Battery Slots Per CS24"],
+        ["", 85, "Delivery SoC %"],
+        ["", 2, "Charging Cycle Per CS24"],
+        ["", 0.0, "ROI for Franchisee (Calculated)"],
+        ["", 0.0, "IRR for Franchisee (Calculated)"],
+        ["", None, "Operation Assumptions"],
+        ["", 70, "Active User % (Courier)"],
+        ["", 40, "Heavy Duty User % (Courier)"],
+        ["", 180, "Heavy Duty km Per Day (Courier)"],
+        ["", 40, "Standard Duty User % (Courier)"],
+        ["", 140, "Standart Duty km Per Day (Courier)"],
+        ["", 20, "Light Duty User % (Courier)"],
+        ["", 100, "Light Duty km Per Day (Courier)"],
+        ["", 30, "Active User % (Commuter)"],
+        ["", 35, "Commuter km Per Day"],
+    ]
+    assumptions = pd.DataFrame(assumptions_rows, columns=["A", "B", "C"])
 
     monthly_inputs = pd.DataFrame({
         "Month": list(range(1, 49)),
-        "Courier E-Scooter (Facelift) Units": [0]*48,
-        "Courier E-Scooter (New) Units": [0]*48,
-        "Commuter E-Scooter Units": [0]*48,
-        "Active User % (Courier E-Scooter)": [70]*48,
-        "Active User % (Commuter E-Scooter)": [30]*48,
+        "Courier E-Scooter (Facelift) Units": [0] * 48,
+        "Courier E-Scooter (New) Units": [0] * 48,
+        "Commuter E-Scooter Units": [0] * 48,
+        "Active User % (Courier)": [70] * 48,
+        "Active User % (Commuter)": [30] * 48,
     })
 
     macro = pd.DataFrame({
-        "Year": [2025, 2026, 2027, 2028],
+        "Year": [2026, 2027, 2028, 2029],
         "Average USD/TRY (H1)": [45, 52, 60, 68],
         "Average USD/TRY (H2)": [48, 56, 64, 72],
         "Average Inflation Rate (H1)": [20, 16, 12, 10],
@@ -108,7 +122,7 @@ def make_template_excel():
 
     opex = pd.DataFrame({
         "Cost Item": ["Rent", "Marketing", "Software & IT", "HQ Expenses"],
-        "Monthly Cost (2025)": [250000, 150000, 80000, 200000],
+        "Monthly Cost (2026)": [250000, 150000, 80000, 200000],
         "Type": ["Fixed", "Semi-Variable", "Fixed", "Fixed"],
         "Category": ["Admin", "Growth", "Tech", "Admin"],
         "Escalation Type": ["Inflation", "Inflation", "Inflation", "Inflation"],
@@ -127,7 +141,7 @@ def make_template_excel():
             "CEO",
             "Business Development Manager",
         ],
-        "Base Salary (2025)": [120000, 35000, 45000, 40000, 38000, 36000, 250000, 120000],
+        "Base Salary (2026)": [120000, 35000, 45000, 40000, 38000, 36000, 450000, 180000],
         "Notes": ["", "", "", "", "", "", "", ""],
     })
 
@@ -142,8 +156,8 @@ def make_template_excel():
             "CEO",
             "Business Development Manager",
         ],
-        "First Hire Month After Grace": [1, 1, 1, 1, 1, 1, 4, 4],
-        "Scaling Factor": [1, 1000, 1000, 1000, 1000, 1000, 1, 3000],
+        "First Hire Month (Incl. Grace)": [1, 1, 1, 1, 1, 1, 6, 6],
+        "Monthly (Units per Employee)": [1, 1000, 1000, 1000, 1000, 1000, 1, 3000],
         "Max Cap": [5, 500, 50, 50, 50, 50, 1, 10],
         "Base Headcount": [1, 1, 1, 1, 1, 1, 1, 1],
     })
@@ -172,7 +186,7 @@ def make_template_excel():
 
     bio = BytesIO()
     with pd.ExcelWriter(bio, engine="openpyxl") as writer:
-        assumptions.to_excel(writer, sheet_name="Assumptions", index=False)
+        assumptions.to_excel(writer, sheet_name="Assumptions", index=False, header=False)
         monthly_inputs.to_excel(writer, sheet_name="Monthly Inputs", index=False)
         macro.to_excel(writer, sheet_name="Macro Assumptions", index=False)
         opex.to_excel(writer, sheet_name="OPEX", index=False)
@@ -186,48 +200,117 @@ def make_template_excel():
 
 
 # =========================================================
-# PARAM READERS
+# ASSUMPTION LAYOUT READER
 # =========================================================
 
-def get_param_value(df, name, default=0):
-    if df is None or df.empty:
-        return default
-    cols = [str(c).strip().lower() for c in df.columns]
-    if "parameter" not in cols or "value" not in cols:
-        return default
-    pcol = df.columns[cols.index("parameter")]
-    vcol = df.columns[cols.index("value")]
-    hit = df[df[pcol].astype(str).str.strip().str.lower() == name.strip().lower()]
-    if hit.empty:
-        return default
-    return hit.iloc[0][vcol]
+def read_assumptions_layout_from_workbook(file_obj):
+    file_obj.seek(0)
+    wb = openpyxl.load_workbook(file_obj, data_only=False)
+    ws = wb["Assumptions"]
+
+    rows = []
+    for r in range(1, ws.max_row + 1):
+        label = ws[f"C{r}"].value
+        value = ws[f"B{r}"].value
+        if label is None:
+            continue
+
+        label_str = str(label).strip()
+
+        # section header
+        if value is None and label_str:
+            rows.append({
+                "row_no": r,
+                "kind": "section",
+                "label": label_str,
+                "raw_value": None,
+                "decimal": False,
+            })
+            continue
+
+        # normal assumption line
+        decimal_flag = is_yellow_fill(ws[f"B{r}"])
+        rows.append({
+            "row_no": r,
+            "kind": "line",
+            "label": label_str,
+            "raw_value": value,
+            "decimal": decimal_flag,
+        })
+
+    return rows
 
 
-def get_half_for_month(month_no):
-    year_index = (month_no - 1) // 12
-    month_in_year = ((month_no - 1) % 12) + 1
-    year = 2025 + year_index
-    half = "H1" if month_in_year <= 6 else "H2"
-    return year, half
+def default_assumptions_layout():
+    return [
+        {"row_no": 2, "kind": "section", "label": "Production Assumptions", "raw_value": None, "decimal": False},
+        {"row_no": 3, "kind": "line", "label": "Grace Period (Months)", "raw_value": 1, "decimal": False},
+        {"row_no": 4, "kind": "line", "label": "Raw Material Required Before (Months)", "raw_value": 2, "decimal": False},
+        {"row_no": 5, "kind": "line", "label": "Stock-In Rate %", "raw_value": 10, "decimal": False},
+
+        {"row_no": 7, "kind": "section", "label": "e-Scooter Assumptions", "raw_value": None, "decimal": False},
+        {"row_no": 8, "kind": "line", "label": "Battery Cost Per kWh (USD)", "raw_value": 200, "decimal": False},
+        {"row_no": 9, "kind": "line", "label": "Battery kWh Each", "raw_value": 3.24, "decimal": True},
+        {"row_no": 10, "kind": "line", "label": "Battery Per e-Scooter", "raw_value": 2, "decimal": False},
+        {"row_no": 11, "kind": "line", "label": "Wh Consumption Per Km", "raw_value": 40.0, "decimal": True},
+        {"row_no": 12, "kind": "line", "label": "Battery Life (Years)", "raw_value": 8, "decimal": False},
+
+        {"row_no": 14, "kind": "section", "label": "Charging Station Assumptions", "raw_value": None, "decimal": False},
+        {"row_no": 15, "kind": "line", "label": "CS24 Hardware & Installation Cost (USD)", "raw_value": 5000, "decimal": False},
+        {"row_no": 16, "kind": "line", "label": "Franchisee Down Payment %", "raw_value": 25, "decimal": False},
+        {"row_no": 17, "kind": "line", "label": "Franchisee Investment per CS24 (Calculated)", "raw_value": 0, "decimal": False},
+        {"row_no": 18, "kind": "line", "label": "Energy Buy Price (TRY - 2026)", "raw_value": 3.5, "decimal": True},
+        {"row_no": 19, "kind": "line", "label": "Energy Sell Price (TRY - 2026)", "raw_value": 15.0, "decimal": True},
+        {"row_no": 20, "kind": "line", "label": "Gross Profit (TRY) (Calculated)", "raw_value": 0.0, "decimal": True},
+        {"row_no": 21, "kind": "line", "label": "Franchesee Share %", "raw_value": 60, "decimal": False},
+        {"row_no": 22, "kind": "line", "label": "Battery Slots Per CS24", "raw_value": 24, "decimal": False},
+        {"row_no": 23, "kind": "line", "label": "Delivery SoC %", "raw_value": 85, "decimal": False},
+        {"row_no": 24, "kind": "line", "label": "Charging Cycle Per CS24", "raw_value": 2, "decimal": False},
+        {"row_no": 25, "kind": "line", "label": "ROI for Franchisee (Calculated)", "raw_value": 0.0, "decimal": True},
+        {"row_no": 26, "kind": "line", "label": "IRR for Franchisee (Calculated)", "raw_value": 0.0, "decimal": True},
+
+        {"row_no": 28, "kind": "section", "label": "Operation Assumptions", "raw_value": None, "decimal": False},
+        {"row_no": 29, "kind": "line", "label": "Active User % (Courier)", "raw_value": 70, "decimal": False},
+        {"row_no": 30, "kind": "line", "label": "Heavy Duty User % (Courier)", "raw_value": 40, "decimal": False},
+        {"row_no": 31, "kind": "line", "label": "Heavy Duty km Per Day (Courier)", "raw_value": 180, "decimal": False},
+        {"row_no": 32, "kind": "line", "label": "Standard Duty User % (Courier)", "raw_value": 40, "decimal": False},
+        {"row_no": 33, "kind": "line", "label": "Standart Duty km Per Day (Courier)", "raw_value": 140, "decimal": False},
+        {"row_no": 34, "kind": "line", "label": "Light Duty User % (Courier)", "raw_value": 20, "decimal": False},
+        {"row_no": 35, "kind": "line", "label": "Light Duty km Per Day (Courier)", "raw_value": 100, "decimal": False},
+        {"row_no": 36, "kind": "line", "label": "Active User % (Commuter)", "raw_value": 30, "decimal": False},
+        {"row_no": 37, "kind": "line", "label": "Commuter km Per Day", "raw_value": 35, "decimal": False},
+    ]
 
 
-def get_macro_value(macro_df, year, half, field_base):
-    if macro_df is None or macro_df.empty:
-        return 0
-    year_row = macro_df[macro_df["Year"] == year]
-    if year_row.empty:
-        return 0
-    col = f"{field_base} ({half})"
-    if col not in macro_df.columns:
-        return 0
-    return safe_float(year_row.iloc[0][col], 0)
+# =========================================================
+# ASSUMPTION VALUE HELPERS
+# =========================================================
+
+CALCULATED_LABELS = {
+    "Franchisee Investment per CS24 (Calculated)",
+    "Gross Profit (TRY) (Calculated)",
+    "ROI for Franchisee (Calculated)",
+    "IRR for Franchisee (Calculated)",
+}
+
+OVERRIDE_LABELS = {
+    "Active User % (Courier)",
+    "Heavy Duty User % (Courier)",
+    "Heavy Duty km Per Day (Courier)",
+    "Standard Duty User % (Courier)",
+    "Standart Duty km Per Day (Courier)",
+    "Light Duty User % (Courier)",
+    "Light Duty km Per Day (Courier)",
+    "Active User % (Commuter)",
+    "Commuter km Per Day",
+}
 
 
 # =========================================================
 # HEADER
 # =========================================================
 
-st.title("HOKO Mobility Financial Copilot v04.3")
+st.title("HOKO Mobility Financial Copilot v05")
 st.caption("Excel-Driven, Multi-Product, Monthly Financial Model")
 
 with st.expander("Excel Upload Instructions", expanded=True):
@@ -235,14 +318,14 @@ with st.expander("Excel Upload Instructions", expanded=True):
 **Please upload your Business Plan Excel file.**
 
 Required sheets:
-1. Assumptions
-2. Monthly Inputs
-3. Macro Assumptions
-4. OPEX
-5. Personnel Base
-6. Personnel Monthly Rules
-7. BoM List
-8. Product CapEx
+Assumptions  
+Monthly Inputs  
+Macro Assumptions  
+OPEX  
+Personnel Base  
+Personnel Monthly Rules  
+BoM List  
+Product CapEx  
 
 Cash Flow Statement and Balance Sheet are generated inside the app.
 """)
@@ -250,7 +333,7 @@ Cash Flow Statement and Balance Sheet are generated inside the app.
 st.download_button(
     "Download Template Excel",
     data=make_template_excel(),
-    file_name="HOKO_BP_Template_v04_3.xlsx",
+    file_name="HOKO_BP_Template_v05.xlsx",
     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 )
 
@@ -261,7 +344,7 @@ uploaded_file = st.file_uploader("Upload Business Plan Excel", type=["xlsx"])
 # READ EXCEL
 # =========================================================
 
-assumptions_df = None
+assumptions_layout = default_assumptions_layout()
 monthly_inputs_df = None
 macro_df = None
 opex_df = None
@@ -272,6 +355,7 @@ product_capex_df = None
 
 if uploaded_file is not None:
     try:
+        uploaded_file.seek(0)
         xls = pd.ExcelFile(uploaded_file)
         required = [
             "Assumptions",
@@ -287,7 +371,9 @@ if uploaded_file is not None:
         if missing:
             st.error(f"Missing sheet(s): {', '.join(missing)}")
         else:
-            assumptions_df = pd.read_excel(xls, "Assumptions")
+            assumptions_layout = read_assumptions_layout_from_workbook(uploaded_file)
+            uploaded_file.seek(0)
+            xls = pd.ExcelFile(uploaded_file)
             monthly_inputs_df = pd.read_excel(xls, "Monthly Inputs")
             macro_df = pd.read_excel(xls, "Macro Assumptions")
             opex_df = pd.read_excel(xls, "OPEX")
@@ -301,95 +387,96 @@ if uploaded_file is not None:
 
 
 # =========================================================
-# DEFAULTS FROM EXCEL / FALLBACK
-# =========================================================
-
-base_grace_period_months = safe_int(get_param_value(assumptions_df, "Grace Period (Months)", 5))
-base_raw_material_required_before_months = safe_int(get_param_value(assumptions_df, "Raw Material Required Before (Months)", 3))
-base_stock_in_rate_pct = safe_float(get_param_value(assumptions_df, "Stock-In Rate %", 10))
-base_energy_buy_price_2025 = safe_float(get_param_value(assumptions_df, "Energy Buy Price (2025)", 3.5))
-base_energy_sell_price_2025 = safe_float(get_param_value(assumptions_df, "Energy Sell Price (2025)", 15))
-base_newco_share_pct = safe_float(get_param_value(assumptions_df, "NewCo Share %", 40))
-base_battery_slots_per_cs24 = safe_int(get_param_value(assumptions_df, "Battery Slots Per CS24", 24))
-base_battery_kwh_each = safe_float(get_param_value(assumptions_df, "Battery kWh Each", 3.24))
-base_delivery_soc_pct = safe_float(get_param_value(assumptions_df, "Delivery SoC %", 85))
-base_charging_cycle_per_cs24 = safe_float(get_param_value(assumptions_df, "Charging Cycle Per CS24", 2))
-base_cs24_hardware_installation_usd = safe_float(get_param_value(assumptions_df, "CS24 Hardware & Installation USD", 5000))
-base_battery_usd_per_kwh = safe_float(get_param_value(assumptions_df, "Battery USD Per kWh", 200))
-base_down_payment_pct = safe_float(get_param_value(assumptions_df, "Down Payment %", 25))
-base_battery_life_years = safe_int(get_param_value(assumptions_df, "Battery Life (Years)", 8))
-base_tax_rate_pct = safe_float(get_param_value(assumptions_df, "Tax Rate %", 20))
-base_wh_per_km = safe_float(get_param_value(assumptions_df, "Wh Per Km", 40))
-
-base_active_user_pct_courier = safe_float(get_param_value(assumptions_df, "Active User % (Courier E-Scooter)", 70))
-base_active_user_pct_commuter = safe_float(get_param_value(assumptions_df, "Active User % (Commuter E-Scooter)", 30))
-base_heavy_duty_user_pct = safe_float(get_param_value(assumptions_df, "Heavy Duty User % (Courier Scooter)", 40))
-base_standard_duty_user_pct = safe_float(get_param_value(assumptions_df, "Standard Duty User % (Courier Scooter)", 40))
-base_light_duty_user_pct = safe_float(get_param_value(assumptions_df, "Light Duty User % (Courier Scooter)", 20))
-base_heavy_duty_km_per_day = safe_float(get_param_value(assumptions_df, "Heavy Duty Km Per Day", 180))
-base_standard_duty_km_per_day = safe_float(get_param_value(assumptions_df, "Standard Duty Km Per Day", 140))
-base_light_duty_km_per_day = safe_float(get_param_value(assumptions_df, "Light Duty Km Per Day", 100))
-
-
-# =========================================================
-# ASSUMPTIONS
+# ASSUMPTIONS UI (ORDER FROM EXCEL)
 # =========================================================
 
 st.markdown("## Assumptions")
 
-with st.expander("Editable Assumptions", expanded=True):
-    e1, e2, e3 = st.columns(3)
+assumption_inputs = {}
 
-    with e1:
-        grace_period_months = st.number_input("Grace Period (Months)", min_value=0, value=base_grace_period_months, step=1)
-        raw_material_required_before_months = st.number_input("Raw Material Required Before (Months)", min_value=0, value=base_raw_material_required_before_months, step=1)
-        stock_in_rate_pct = st.number_input("Stock-In Rate %", min_value=0, max_value=100, value=up_int(base_stock_in_rate_pct), step=1)
-        energy_buy_price_2025 = st.number_input("Energy Buy Price (2025)", min_value=0, value=up_int(base_energy_buy_price_2025), step=1)
-        energy_sell_price_2025 = st.number_input("Energy Sell Price (2025)", min_value=0, value=up_int(base_energy_sell_price_2025), step=1)
+for row in assumptions_layout:
+    if row["kind"] == "section":
+        st.markdown(f"**{row['label']}**")
+        continue
 
-    with e2:
-        newco_share_pct = st.number_input("NewCo Share %", min_value=0, max_value=100, value=up_int(base_newco_share_pct), step=1)
-        battery_slots_per_cs24 = st.number_input("Battery Slots Per CS24", min_value=1, value=base_battery_slots_per_cs24, step=1)
-        battery_kwh_each = st.number_input("Battery kWh Each", min_value=0, value=up_int(base_battery_kwh_each), step=1)
-        delivery_soc_pct = st.number_input("Delivery SoC %", min_value=0, max_value=100, value=up_int(base_delivery_soc_pct), step=1)
-        charging_cycle_per_cs24 = st.number_input("Charging Cycle Per CS24", min_value=0, value=up_int(base_charging_cycle_per_cs24), step=1)
+    label = row["label"]
+    raw_value = row["raw_value"]
+    decimal_flag = row["decimal"]
 
-    with e3:
-        cs24_hardware_installation_usd = st.number_input("CS24 Hardware & Installation USD", min_value=0, value=up_int(base_cs24_hardware_installation_usd), step=100)
-        battery_usd_per_kwh = st.number_input("Battery USD Per kWh", min_value=0, value=up_int(base_battery_usd_per_kwh), step=10)
-        down_payment_pct = st.number_input("Down Payment %", min_value=0, max_value=100, value=up_int(base_down_payment_pct), step=1)
-        battery_life_years = st.number_input("Battery Life (Years)", min_value=1, value=base_battery_life_years, step=1)
-        tax_rate_pct = st.number_input("Tax Rate %", min_value=0, max_value=100, value=up_int(base_tax_rate_pct), step=1)
-        wh_per_km = st.number_input("Wh Per Km", min_value=0, value=up_int(base_wh_per_km), step=1)
+    if label in CALCULATED_LABELS:
+        assumption_inputs[label] = {"type": "calculated", "value": raw_value, "decimal": decimal_flag}
+        st.write(f"{label}: [Calculated]")
+        continue
 
-with st.expander("Override Assumptions", expanded=True):
-    o1, o2 = st.columns(2)
+    if label in OVERRIDE_LABELS:
+        default_val = "" if raw_value is None else str(raw_value)
+        value = st.text_input(label, value=default_val, key=f"ovr_{label}")
+        assumption_inputs[label] = {"type": "override", "value": value, "decimal": decimal_flag}
+    else:
+        if decimal_flag:
+            value = st.number_input(
+                label,
+                value=safe_float(raw_value, 0.0),
+                step=0.1,
+                format="%.1f",
+                key=f"ed_{label}",
+            )
+        else:
+            value = st.number_input(
+                label,
+                value=safe_int(raw_value, 0),
+                step=1,
+                key=f"ed_{label}",
+            )
+        assumption_inputs[label] = {"type": "editable", "value": value, "decimal": decimal_flag}
 
-    with o1:
-        active_user_pct_courier_avg = st.text_input("Active User % (Courier E-Scooter)", value=str(up_int(base_active_user_pct_courier)))
-        active_user_pct_commuter_avg = st.text_input("Active User % (Commuter E-Scooter)", value=str(up_int(base_active_user_pct_commuter)))
 
-    with o2:
-        heavy_duty_user_pct = st.text_input("Heavy Duty User % (Courier Scooter)", value=str(up_int(base_heavy_duty_user_pct)))
-        standard_duty_user_pct = st.text_input("Standard Duty User % (Courier Scooter)", value=str(up_int(base_standard_duty_user_pct)))
-        light_duty_user_pct = st.text_input("Light Duty User % (Courier Scooter)", value=str(up_int(base_light_duty_user_pct)))
-        heavy_duty_km_per_day = st.text_input("Heavy Duty Km Per Day", value=str(up_int(base_heavy_duty_km_per_day)))
-        standard_duty_km_per_day = st.text_input("Standard Duty Km Per Day", value=str(up_int(base_standard_duty_km_per_day)))
-        light_duty_km_per_day = st.text_input("Light Duty Km Per Day", value=str(up_int(base_light_duty_km_per_day)))
+# =========================================================
+# ASSUMPTION EXTRACTION
+# =========================================================
 
-active_user_pct_courier_avg = safe_int(active_user_pct_courier_avg, up_int(base_active_user_pct_courier))
-active_user_pct_commuter_avg = safe_int(active_user_pct_commuter_avg, up_int(base_active_user_pct_commuter))
-heavy_duty_user_pct = safe_int(heavy_duty_user_pct, up_int(base_heavy_duty_user_pct))
-standard_duty_user_pct = safe_int(standard_duty_user_pct, up_int(base_standard_duty_user_pct))
-light_duty_user_pct = safe_int(light_duty_user_pct, up_int(base_light_duty_user_pct))
-heavy_duty_km_per_day = safe_int(heavy_duty_km_per_day, up_int(base_heavy_duty_km_per_day))
-standard_duty_km_per_day = safe_int(standard_duty_km_per_day, up_int(base_standard_duty_km_per_day))
-light_duty_km_per_day = safe_int(light_duty_km_per_day, up_int(base_light_duty_km_per_day))
+def get_assumption(label, default=0):
+    if label not in assumption_inputs:
+        return default
+    item = assumption_inputs[label]
+    if item["type"] == "override":
+        return safe_float(item["value"], default) if item["decimal"] else safe_int(item["value"], default)
+    return item["value"]
 
-if heavy_duty_user_pct + standard_duty_user_pct + light_duty_user_pct != 100:
+
+grace_period_months = safe_int(get_assumption("Grace Period (Months)", 1))
+raw_material_required_before_months = safe_int(get_assumption("Raw Material Required Before (Months)", 2))
+stock_in_rate_pct = safe_float(get_assumption("Stock-In Rate %", 10))
+
+battery_cost_per_kwh_usd = safe_float(get_assumption("Battery Cost Per kWh (USD)", 200))
+battery_kwh_each = safe_float(get_assumption("Battery kWh Each", 3.24))
+battery_per_escooter = safe_int(get_assumption("Battery Per e-Scooter", 2))
+wh_consumption_per_km = safe_float(get_assumption("Wh Consumption Per Km", 40.0))
+battery_life_years = safe_int(get_assumption("Battery Life (Years)", 8))
+
+cs24_hardware_installation_cost_usd = safe_float(get_assumption("CS24 Hardware & Installation Cost (USD)", 5000))
+franchisee_down_payment_pct = safe_float(get_assumption("Franchisee Down Payment %", 25))
+energy_buy_price_try_2026 = safe_float(get_assumption("Energy Buy Price (TRY - 2026)", 3.5))
+energy_sell_price_try_2026 = safe_float(get_assumption("Energy Sell Price (TRY - 2026)", 15.0))
+franchisee_share_pct = safe_float(get_assumption("Franchesee Share %", 60))
+battery_slots_per_cs24 = safe_int(get_assumption("Battery Slots Per CS24", 24))
+delivery_soc_pct = safe_float(get_assumption("Delivery SoC %", 85))
+charging_cycle_per_cs24 = safe_float(get_assumption("Charging Cycle Per CS24", 2))
+
+active_user_pct_courier = safe_float(get_assumption("Active User % (Courier)", 70))
+heavy_duty_user_pct_courier = safe_float(get_assumption("Heavy Duty User % (Courier)", 40))
+heavy_duty_km_per_day_courier = safe_float(get_assumption("Heavy Duty km Per Day (Courier)", 180))
+standard_duty_user_pct_courier = safe_float(get_assumption("Standard Duty User % (Courier)", 40))
+standard_duty_km_per_day_courier = safe_float(get_assumption("Standart Duty km Per Day (Courier)", 140))
+light_duty_user_pct_courier = safe_float(get_assumption("Light Duty User % (Courier)", 20))
+light_duty_km_per_day_courier = safe_float(get_assumption("Light Duty km Per Day (Courier)", 100))
+active_user_pct_commuter = safe_float(get_assumption("Active User % (Commuter)", 30))
+commuter_km_per_day = safe_float(get_assumption("Commuter km Per Day", 35))
+
+if round(heavy_duty_user_pct_courier + standard_duty_user_pct_courier + light_duty_user_pct_courier, 4) != 100:
     st.warning(
         f"Heavy Duty + Standard Duty + Light Duty must equal %100. Current total: "
-        f"%{heavy_duty_user_pct + standard_duty_user_pct + light_duty_user_pct}"
+        f"%{math.ceil(heavy_duty_user_pct_courier + standard_duty_user_pct_courier + light_duty_user_pct_courier)}"
     )
 
 
@@ -397,27 +484,37 @@ if heavy_duty_user_pct + standard_duty_user_pct + light_duty_user_pct != 100:
 # CALCULATED ASSUMPTIONS
 # =========================================================
 
-weighted_avg_km_per_day_courier = math.ceil(
-    heavy_duty_km_per_day * heavy_duty_user_pct / 100
-    + standard_duty_km_per_day * standard_duty_user_pct / 100
-    + light_duty_km_per_day * light_duty_user_pct / 100
+weighted_avg_km_per_day_courier = (
+    heavy_duty_km_per_day_courier * heavy_duty_user_pct_courier / 100
+    + standard_duty_km_per_day_courier * standard_duty_user_pct_courier / 100
+    + light_duty_km_per_day_courier * light_duty_user_pct_courier / 100
 )
 
-commuter_km_per_day = 35
+kwh_per_escooter_per_day = (
+    weighted_avg_km_per_day_courier * active_user_pct_courier / 100
+    + commuter_km_per_day * active_user_pct_commuter / 100
+) * wh_consumption_per_km / 1000
 
-km_per_day_system_avg = math.ceil(
-    weighted_avg_km_per_day_courier * active_user_pct_courier_avg / 100
-    + commuter_km_per_day * active_user_pct_commuter_avg / 100
+franchisee_investment_per_cs24_calculated = (
+    cs24_hardware_installation_cost_usd
+    + (battery_slots_per_cs24 * battery_kwh_each * battery_cost_per_kwh_usd)
 )
 
-franchise_share_pct = 100 - newco_share_pct
-gross_margin_per_kwh = math.ceil(energy_sell_price_2025 - energy_buy_price_2025)
-newco_margin_per_kwh = math.ceil((energy_sell_price_2025 - energy_buy_price_2025) * newco_share_pct / 100)
+gross_profit_try_calculated = energy_sell_price_try_2026 - energy_buy_price_try_2026
+roi_for_franchisee_calculated = 0.0
+irr_for_franchisee_calculated = 0.0
 
-total_battery_kwh_per_cs24 = math.ceil(battery_slots_per_cs24 * battery_kwh_each)
-sellable_kwh_per_cycle = math.ceil(total_battery_kwh_per_cs24 * delivery_soc_pct / 100)
-daily_kwh_per_cs24 = math.ceil(sellable_kwh_per_cycle * charging_cycle_per_cs24)
-kwh_per_motor_per_day = math.ceil(km_per_day_system_avg * wh_per_km / 1000)
+calculated_map = {
+    "Franchisee Investment per CS24 (Calculated)": franchisee_investment_per_cs24_calculated,
+    "Gross Profit (TRY) (Calculated)": gross_profit_try_calculated,
+    "ROI for Franchisee (Calculated)": roi_for_franchisee_calculated,
+    "IRR for Franchisee (Calculated)": irr_for_franchisee_calculated,
+}
+
+# update assumptions display source
+for row in assumptions_layout:
+    if row["kind"] == "line" and row["label"] in calculated_map:
+        row["raw_value"] = calculated_map[row["label"]]
 
 
 # =========================================================
@@ -426,23 +523,29 @@ kwh_per_motor_per_day = math.ceil(km_per_day_system_avg * wh_per_km / 1000)
 
 base_salary_map = {}
 if personnel_base_df is not None and not personnel_base_df.empty:
-    for _, row in personnel_base_df.iterrows():
-        base_salary_map[str(row["Role"]).strip()] = safe_float(row["Base Salary (2025)"], 0)
+    salary_col = None
+    for c in personnel_base_df.columns:
+        if "Base Salary" in str(c):
+            salary_col = c
+            break
+    if salary_col:
+        for _, row in personnel_base_df.iterrows():
+            base_salary_map[str(row["Role"]).strip()] = safe_float(row[salary_col], 0)
 
 personnel_rule_rows = []
 if personnel_rules_df is not None and not personnel_rules_df.empty:
     for _, row in personnel_rules_df.iterrows():
         personnel_rule_rows.append({
             "Role": str(row["Role"]).strip(),
-            "First Hire Month After Grace": safe_int(row["First Hire Month After Grace"], 1),
-            "Scaling Factor": max(1, safe_int(row["Scaling Factor"], 1)),
+            "First Hire Month (Incl. Grace)": safe_int(row["First Hire Month (Incl. Grace)"], 1),
+            "Monthly (Units per Employee)": max(1, safe_int(row["Monthly (Units per Employee)"], 1)),
             "Max Cap": max(1, safe_int(row["Max Cap"], 1)),
             "Base Headcount": max(1, safe_int(row["Base Headcount"], 1)),
         })
 
 
 # =========================================================
-# PRODUCT MAPS
+# PRODUCT / BOM MAPS
 # =========================================================
 
 bom_monthly_usd_per_product = {}
@@ -479,8 +582,8 @@ def build_default_monthly_inputs():
             "Courier E-Scooter (Facelift) Units": 0,
             "Courier E-Scooter (New) Units": total,
             "Commuter E-Scooter Units": 0,
-            "Active User % (Courier E-Scooter)": 70,
-            "Active User % (Commuter E-Scooter)": 30,
+            "Active User % (Courier)": 70,
+            "Active User % (Commuter)": 30,
         })
     return pd.DataFrame(rows)
 
@@ -520,48 +623,50 @@ for _, row in monthly_inputs_df.iterrows():
 
     monthly_production_units = courier_facelift_units + courier_new_units + commuter_units
 
-    stock_in_rate_pct_month = stock_in_rate_pct
-    if "Stock-In Rate %" in row.index:
-        stock_in_rate_pct_month = safe_float(row["Stock-In Rate %"], stock_in_rate_pct)
-
-    units_added_to_stock = math.ceil(monthly_production_units * stock_in_rate_pct_month / 100)
+    units_added_to_stock = math.ceil(monthly_production_units * stock_in_rate_pct / 100)
     units_sold_month = monthly_production_units - units_added_to_stock
 
     inventory_units += units_added_to_stock
     active_escooters += units_sold_month
 
-    energy_buy_price_month = math.ceil(energy_buy_price_2025 * (1 + inflation_rate_month / 100))
-    energy_sell_price_month = math.ceil(energy_sell_price_2025 * (1 + inflation_rate_month / 100))
-    newco_margin_per_kwh_month = math.ceil((energy_sell_price_month - energy_buy_price_month) * newco_share_pct / 100)
+    energy_buy_price_month = energy_buy_price_try_2026 * (1 + inflation_rate_month / 100)
+    energy_sell_price_month = energy_sell_price_try_2026 * (1 + inflation_rate_month / 100)
+    company_share_pct = 100 - franchisee_share_pct
+    newco_margin_per_kwh_month = (energy_sell_price_month - energy_buy_price_month) * company_share_pct / 100
 
-    monthly_kwh_sold = math.ceil(active_escooters * kwh_per_motor_per_day * 30)
-    monthly_revenue = math.ceil(monthly_kwh_sold * energy_sell_price_month)
-    monthly_energy_cost = math.ceil(monthly_kwh_sold * energy_buy_price_month)
-    monthly_energy_gp_newco = math.ceil(monthly_kwh_sold * newco_margin_per_kwh_month)
+    monthly_kwh_sold = active_escooters * kwh_per_escooter_per_day * 30
+    monthly_revenue = monthly_kwh_sold * energy_sell_price_month
+    monthly_energy_cost = monthly_kwh_sold * energy_buy_price_month
+    monthly_energy_gp_newco = monthly_kwh_sold * newco_margin_per_kwh_month
 
-    monthly_motor_gross_profit = math.ceil(units_sold_month * 80000)
+    monthly_motor_gross_profit = units_sold_month * 80000
 
-    monthly_cs24_required = math.ceil((active_escooters * kwh_per_motor_per_day) / max(1, daily_kwh_per_cs24))
+    total_battery_kwh_per_cs24 = battery_slots_per_cs24 * battery_kwh_each
+    sellable_kwh_per_cycle = total_battery_kwh_per_cs24 * delivery_soc_pct / 100
+    daily_kwh_per_cs24 = sellable_kwh_per_cycle * charging_cycle_per_cs24
+
+    monthly_cs24_required = math.ceil((active_escooters * kwh_per_escooter_per_day) / max(1, daily_kwh_per_cs24))
     monthly_new_cs24 = max(0, monthly_cs24_required - installed_cs24)
     installed_cs24 = monthly_cs24_required
 
-    cs24_total_capex_try_month = math.ceil(
-        (cs24_hardware_installation_usd + battery_slots_per_cs24 * battery_kwh_each * battery_usd_per_kwh) * usd_try_month
-    )
-    financed_per_cs24_try_month = math.ceil(cs24_total_capex_try_month * (1 - down_payment_pct / 100))
-    monthly_cs24_capex_outflow = math.ceil(monthly_new_cs24 * financed_per_cs24_try_month)
+    cs24_total_capex_try_month = (
+        cs24_hardware_installation_cost_usd
+        + battery_slots_per_cs24 * battery_kwh_each * battery_cost_per_kwh_usd
+    ) * usd_try_month
+    financed_per_cs24_try_month = cs24_total_capex_try_month * (1 - franchisee_down_payment_pct / 100)
+    monthly_cs24_capex_outflow = monthly_new_cs24 * financed_per_cs24_try_month
 
-    monthly_cs24_other_gp = math.ceil(installed_cs24 * ((1200 * usd_try_month) / 12))
+    monthly_cs24_other_gp = installed_cs24 * ((1200 * usd_try_month) / 12)
 
     bom_usd_total = (
         courier_facelift_units * bom_monthly_usd_per_product.get("Courier E-Scooter (Facelift)", 0)
         + courier_new_units * bom_monthly_usd_per_product.get("Courier E-Scooter (New)", 0)
         + commuter_units * bom_monthly_usd_per_product.get("Commuter E-Scooter", 0)
     )
-    current_raw_material_need_try = math.ceil(bom_usd_total * usd_try_month)
+    current_raw_material_need_try = bom_usd_total * usd_try_month
 
-    slowdown_factor = max(0, 1 - stock_in_rate_pct_month / 100)
-    adjusted_raw_material_need_try = math.ceil(current_raw_material_need_try * slowdown_factor)
+    slowdown_factor = max(0, 1 - stock_in_rate_pct / 100)
+    adjusted_raw_material_need_try = current_raw_material_need_try * slowdown_factor
 
     purchase_month = month_no - raw_material_required_before_months
     if 1 <= purchase_month <= 48:
@@ -574,19 +679,18 @@ for _, row in monthly_inputs_df.iterrows():
 
     for pr in personnel_rule_rows:
         role = pr["Role"]
-        first_hire_month_after_grace = pr["First Hire Month After Grace"]
-        actual_hire_month = grace_period_months + first_hire_month_after_grace - 1
+        actual_hire_month = pr["First Hire Month (Incl. Grace)"]
 
         if month_no < actual_hire_month:
             headcount = 0
         else:
-            scaled = math.ceil(monthly_production_units / max(1, pr["Scaling Factor"]))
+            scaled = math.ceil(monthly_production_units / max(1, pr["Monthly (Units per Employee)"]))
             headcount = max(pr["Base Headcount"], scaled)
             headcount = min(headcount, pr["Max Cap"])
 
         salary_base = base_salary_map.get(role, 0)
-        monthly_salary_actual = math.ceil(salary_base * (1 + inflation_rate_month / 100))
-        monthly_personnel_cost = math.ceil(headcount * monthly_salary_actual)
+        monthly_salary_actual = salary_base * (1 + inflation_rate_month / 100)
+        monthly_personnel_cost = headcount * monthly_salary_actual
 
         total_personnel_cost_month += monthly_personnel_cost
 
@@ -601,38 +705,38 @@ for _, row in monthly_inputs_df.iterrows():
     total_opex_month = 0
     if opex_df is not None and not opex_df.empty:
         for _, orow in opex_df.iterrows():
-            base_cost = safe_float(orow["Monthly Cost (2025)"], 0)
-            esc_type = str(orow["Escalation Type"]).strip().lower()
-            custom_rate = safe_float(orow["Escalation Rate %"], 0)
+            base_cost = safe_float(orow.get("Monthly Cost (2026)", 0), 0)
+            esc_type = str(orow.get("Escalation Type", "")).strip().lower()
+            custom_rate = safe_float(orow.get("Escalation Rate %", 0), 0)
 
             if esc_type == "custom":
-                actual_cost = math.ceil(base_cost * (1 + custom_rate / 100))
+                actual_cost = base_cost * (1 + custom_rate / 100)
             elif esc_type == "fx linked":
-                actual_cost = math.ceil(base_cost * (usd_try_month / 45))
+                actual_cost = base_cost * (usd_try_month / 45)
             else:
-                actual_cost = math.ceil(base_cost * (1 + inflation_rate_month / 100))
+                actual_cost = base_cost * (1 + inflation_rate_month / 100)
 
             total_opex_month += actual_cost
 
-    monthly_total_gross_profit = math.ceil(
+    monthly_total_gross_profit = (
         monthly_energy_gp_newco + monthly_motor_gross_profit + monthly_cs24_other_gp
     )
-    monthly_ebitda_proxy = math.ceil(
+    monthly_ebitda_proxy = (
         monthly_total_gross_profit - total_personnel_cost_month - total_opex_month
     )
 
     monthly_interest_cost = 0
-    monthly_tax = math.ceil(max(0, monthly_ebitda_proxy) * tax_rate_pct / 100)
-    monthly_net_income = math.ceil(monthly_ebitda_proxy - monthly_interest_cost - monthly_tax)
+    monthly_tax = max(0, monthly_ebitda_proxy) * 0.20
+    monthly_net_income = monthly_ebitda_proxy - monthly_interest_cost - monthly_tax
 
-    monthly_net_cash_flow = math.ceil(
+    monthly_net_cash_flow = (
         monthly_net_income - monthly_cs24_capex_outflow - raw_material_cost_month
     )
     cumulative_cash += monthly_net_cash_flow
 
-    installed_cs24_asset_value = math.ceil(installed_cs24 * cs24_total_capex_try_month)
-    financing_liability = math.ceil(installed_cs24 * financed_per_cs24_try_month)
-    equity_proxy = math.ceil(max(0, cumulative_cash) + installed_cs24 * (cs24_total_capex_try_month - financed_per_cs24_try_month))
+    installed_cs24_asset_value = installed_cs24 * cs24_total_capex_try_month
+    financing_liability = installed_cs24 * financed_per_cs24_try_month
+    equity_proxy = max(0, cumulative_cash) + installed_cs24 * (cs24_total_capex_try_month - financed_per_cs24_try_month)
 
     results.append({
         "Month": month_no,
@@ -677,6 +781,7 @@ for _, row in monthly_inputs_df.iterrows():
     })
 
 monthly_df = pd.DataFrame(results)
+personnel_detail_df = pd.DataFrame(personnel_records) if personnel_records else pd.DataFrame()
 
 annual_df = monthly_df.groupby("Year", as_index=False).agg({
     "Monthly Production Units": "sum",
@@ -701,8 +806,6 @@ annual_df = monthly_df.groupby("Year", as_index=False).agg({
     "Financing Liability": "last",
     "Equity Proxy": "last",
 })
-
-personnel_detail_df = pd.DataFrame(personnel_records) if personnel_records else pd.DataFrame()
 
 cash_flow_df = monthly_df[[
     "Month",
@@ -734,63 +837,58 @@ balance_sheet_df = monthly_df[[
     "Equity Proxy",
 ]].copy()
 
-assumption_rows = [
-    ["Grace Period (Months)", grace_period_months, "Editable"],
-    ["Raw Material Required Before (Months)", raw_material_required_before_months, "Editable"],
-    ["Stock-In Rate %", stock_in_rate_pct, "Editable"],
-    ["Energy Buy Price (2025)", energy_buy_price_2025, "Editable"],
-    ["Energy Sell Price (2025)", energy_sell_price_2025, "Editable"],
-    ["Gross Margin Per kWh", gross_margin_per_kwh, "Calculated"],
-    ["NewCo Share %", newco_share_pct, "Editable"],
-    ["Franchise Share %", franchise_share_pct, "Calculated"],
-    ["Battery Slots Per CS24", battery_slots_per_cs24, "Editable"],
-    ["Battery kWh Each", battery_kwh_each, "Editable"],
-    ["Delivery SoC %", delivery_soc_pct, "Editable"],
-    ["Charging Cycle Per CS24", charging_cycle_per_cs24, "Editable"],
-    ["Total Battery kWh Per CS24", total_battery_kwh_per_cs24, "Calculated"],
-    ["Sellable kWh Per Cycle", sellable_kwh_per_cycle, "Calculated"],
-    ["Daily kWh Per CS24", daily_kwh_per_cs24, "Calculated"],
-    ["CS24 Hardware & Installation USD", cs24_hardware_installation_usd, "Editable"],
-    ["Battery USD Per kWh", battery_usd_per_kwh, "Editable"],
-    ["Down Payment %", down_payment_pct, "Editable"],
-    ["Battery Life (Years)", battery_life_years, "Editable"],
-    ["Tax Rate %", tax_rate_pct, "Editable"],
-    ["Wh Per Km", wh_per_km, "Editable"],
-    ["Active User % (Courier E-Scooter)", active_user_pct_courier_avg, "Override"],
-    ["Active User % (Commuter E-Scooter)", active_user_pct_commuter_avg, "Override"],
-    ["Heavy Duty User % (Courier Scooter)", heavy_duty_user_pct, "Override"],
-    ["Standard Duty User % (Courier Scooter)", standard_duty_user_pct, "Override"],
-    ["Light Duty User % (Courier Scooter)", light_duty_user_pct, "Override"],
-    ["Heavy Duty Km Per Day", heavy_duty_km_per_day, "Override"],
-    ["Standard Duty Km Per Day", standard_duty_km_per_day, "Override"],
-    ["Light Duty Km Per Day", light_duty_km_per_day, "Override"],
-    ["Weighted Avg Km Per Day (Courier E-Scooter)", weighted_avg_km_per_day_courier, "Calculated"],
-    ["Km Per Day (System Avg)", km_per_day_system_avg, "Calculated"],
-    ["kWh Per Motor Per Day", kwh_per_motor_per_day, "Calculated"],
-]
-assumptions_display_df = pd.DataFrame(assumption_rows, columns=["Parameter", "Value", "Type"])
+
+# =========================================================
+# ASSUMPTIONS DISPLAY TABLE
+# =========================================================
+
+assumption_display_rows = []
+for row in assumptions_layout:
+    if row["kind"] == "section":
+        assumption_display_rows.append({
+            "Section": row["label"],
+            "Parameter": "",
+            "Value": "",
+            "Type": "",
+            "SortKey": row["row_no"],
+            "Kind": "section"
+        })
+    else:
+        label = row["label"]
+        if label in calculated_map:
+            val = calculated_map[label]
+            typ = "Calculated"
+            decimal_flag = row["decimal"]
+        else:
+            val = get_assumption(label, 0)
+            typ = assumption_inputs[label]["type"].capitalize() if label in assumption_inputs else "Editable"
+            decimal_flag = row["decimal"]
+
+        if "%" in label:
+            display_val = fmt_pct(val)
+        elif "Price" in label or "Profit" in label:
+            display_val = f"{safe_float(val, 0):,.1f}" if decimal_flag else fmt_try(val)
+        elif "USD" in label:
+            display_val = f"{safe_float(val, 0):,.1f}" if decimal_flag else fmt_num(val)
+        else:
+            display_val = f"{safe_float(val, 0):,.1f}" if decimal_flag else fmt_num(val)
+
+        assumption_display_rows.append({
+            "Section": "",
+            "Parameter": label,
+            "Value": display_val,
+            "Type": typ,
+            "SortKey": row["row_no"],
+            "Kind": "line"
+        })
+
+assumptions_display_df = pd.DataFrame(assumption_display_rows).sort_values("SortKey")
+assumptions_display_df = assumptions_display_df[["Section", "Parameter", "Value", "Type", "Kind"]]
 
 
 # =========================================================
 # DISPLAY FORMATTING
 # =========================================================
-
-assumptions_display_fmt = assumptions_display_df.copy()
-assumptions_display_fmt["Value"] = assumptions_display_fmt["Value"].astype(object)
-assumptions_display_fmt["Type"] = assumptions_display_fmt["Type"].astype(object)
-
-for i, row in assumptions_display_fmt.iterrows():
-    param = str(row["Parameter"])
-    val = row["Value"]
-
-    if "%" in param:
-        assumptions_display_fmt.at[i, "Value"] = fmt_pct(val)
-    elif "USD" in param:
-        assumptions_display_fmt.at[i, "Value"] = fmt_num(val)
-    elif "Price" in param or "Margin" in param:
-        assumptions_display_fmt.at[i, "Value"] = fmt_try(val)
-    else:
-        assumptions_display_fmt.at[i, "Value"] = fmt_num(val)
 
 dashboard_monthly_fmt = monthly_df.copy()
 for c in dashboard_monthly_fmt.columns:
@@ -807,10 +905,10 @@ currency_cols = [
 num_cols = [
     "Courier E-Scooter (Facelift) Units", "Courier E-Scooter (New) Units",
     "Commuter E-Scooter Units", "Monthly Production Units", "Units Sold", "Units Added To Stock",
-    "Ending Stock Units", "Active E-Scooters", "USD/TRY (Month)", "Inflation Rate (Month)",
-    "Energy Buy Price (Month)", "Energy Sell Price (Month)", "Monthly kWh Sold", "Required CS24",
+    "Ending Stock Units", "Active E-Scooters", "USD/TRY (Month)", "Monthly kWh Sold", "Required CS24",
     "New CS24", "Finished Goods Inventory"
 ]
+decimal_cols = ["Inflation Rate (Month)", "Energy Buy Price (Month)", "Energy Sell Price (Month)"]
 plain_cols = ["Month", "Year"]
 
 for c in plain_cols:
@@ -825,6 +923,10 @@ for c in num_cols:
     if c in dashboard_monthly_fmt.columns:
         dashboard_monthly_fmt[c] = dashboard_monthly_fmt[c].map(fmt_num)
 
+for c in decimal_cols:
+    if c in dashboard_monthly_fmt.columns:
+        dashboard_monthly_fmt[c] = dashboard_monthly_fmt[c].map(lambda x: f"{safe_float(x, 0):,.1f}")
+
 annual_fmt = annual_df.copy()
 for c in annual_fmt.columns:
     annual_fmt[c] = annual_fmt[c].astype(object)
@@ -836,20 +938,6 @@ for c in annual_fmt.columns:
         annual_fmt[c] = annual_fmt[c].map(fmt_num)
     else:
         annual_fmt[c] = annual_fmt[c].map(fmt_try)
-
-personnel_fmt = personnel_detail_df.copy()
-if not personnel_fmt.empty:
-    for c in personnel_fmt.columns:
-        personnel_fmt[c] = personnel_fmt[c].astype(object)
-
-    if "Month" in personnel_fmt.columns:
-        personnel_fmt["Month"] = personnel_fmt["Month"].map(fmt_plain_int)
-    if "Headcount" in personnel_fmt.columns:
-        personnel_fmt["Headcount"] = personnel_fmt["Headcount"].map(fmt_num)
-    if "Monthly Salary (Actual)" in personnel_fmt.columns:
-        personnel_fmt["Monthly Salary (Actual)"] = personnel_fmt["Monthly Salary (Actual)"].map(fmt_try)
-    if "Monthly Personnel Cost" in personnel_fmt.columns:
-        personnel_fmt["Monthly Personnel Cost"] = personnel_fmt["Monthly Personnel Cost"].map(fmt_try)
 
 cash_flow_fmt = cash_flow_df.copy()
 for c in cash_flow_fmt.columns:
@@ -873,14 +961,28 @@ for c in balance_fmt.columns:
     else:
         balance_fmt[c] = balance_fmt[c].map(fmt_try)
 
+personnel_fmt = personnel_detail_df.copy()
+if not personnel_fmt.empty:
+    for c in personnel_fmt.columns:
+        personnel_fmt[c] = personnel_fmt[c].astype(object)
+
+    if "Month" in personnel_fmt.columns:
+        personnel_fmt["Month"] = personnel_fmt["Month"].map(fmt_plain_int)
+    if "Headcount" in personnel_fmt.columns:
+        personnel_fmt["Headcount"] = personnel_fmt["Headcount"].map(fmt_num)
+    if "Monthly Salary (Actual)" in personnel_fmt.columns:
+        personnel_fmt["Monthly Salary (Actual)"] = personnel_fmt["Monthly Salary (Actual)"].map(fmt_try)
+    if "Monthly Personnel Cost" in personnel_fmt.columns:
+        personnel_fmt["Monthly Personnel Cost"] = personnel_fmt["Monthly Personnel Cost"].map(fmt_try)
+
 
 # =========================================================
 # TABS
 # =========================================================
 
 tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
-    "Investor Dashboard",
     "Assumptions",
+    "Investor Dashboard",
     "Monthly Financials",
     "Cash Flow Statement",
     "Balance Sheet",
@@ -889,6 +991,18 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
 ])
 
 with tab1:
+    st.subheader("Assumptions")
+
+    for _, r in assumptions_display_df.iterrows():
+        if r["Kind"] == "section":
+            st.markdown(f"**{r['Section']}**")
+        else:
+            c1, c2, c3 = st.columns([5, 2, 2])
+            c1.write(r["Parameter"])
+            c2.write(r["Value"])
+            c3.write(r["Type"])
+
+with tab2:
     st.subheader("Investor Dashboard")
 
     last_row = monthly_df.iloc[-1]
@@ -911,37 +1025,25 @@ with tab1:
     st.markdown("### Monthly Trend")
     st.line_chart(monthly_df.set_index("Month")[["Monthly Revenue", "Monthly EBITDA Proxy", "Monthly Net Cash Flow"]])
 
-with tab2:
-    st.subheader("Assumptions")
-    st.dataframe(assumptions_display_fmt, use_container_width=True, hide_index=True)
-    st.caption("Editable rows are changed with arrows. Override rows are changed via text inputs. Calculated rows are formula-driven and read-only.")
-
 with tab3:
     st.subheader("Monthly Financials")
     st.dataframe(dashboard_monthly_fmt, use_container_width=True, hide_index=True)
 
-    st.markdown("### Monthly Revenue / EBITDA / Net Cash Flow")
-    st.line_chart(monthly_df.set_index("Month")[["Monthly Revenue", "Monthly EBITDA Proxy", "Monthly Net Cash Flow"]])
-
 with tab4:
     st.subheader("Cash Flow Statement")
     st.dataframe(cash_flow_fmt, use_container_width=True, hide_index=True)
-
-    st.markdown("### Cash Flow Trend")
     st.line_chart(cash_flow_df.set_index("Month")[["Monthly Net Cash Flow", "Cumulative Cash Balance"]])
 
 with tab5:
     st.subheader("Balance Sheet")
     st.dataframe(balance_fmt, use_container_width=True, hide_index=True)
-
-    st.markdown("### Balance Sheet Trend")
     st.line_chart(balance_sheet_df.set_index("Month")[[
         "Cumulative Cash Balance", "Raw Material Inventory",
         "Installed CS24 Asset Value", "Financing Liability", "Equity Proxy"
     ]])
 
 with tab6:
-    st.subheader("Personnel Monthly View")
+    st.subheader("Personnel")
     if personnel_fmt.empty:
         st.info("No personnel data available.")
     else:
@@ -949,35 +1051,24 @@ with tab6:
 
 with tab7:
     st.subheader("Excel Preview")
-
-    if assumptions_df is not None:
-        st.markdown("### Assumptions")
-        st.dataframe(assumptions_df, use_container_width=True)
-
     if monthly_inputs_df is not None:
         st.markdown("### Monthly Inputs")
         st.dataframe(monthly_inputs_df, use_container_width=True)
-
     if macro_df is not None:
         st.markdown("### Macro Assumptions")
         st.dataframe(macro_df, use_container_width=True)
-
     if opex_df is not None:
         st.markdown("### OPEX")
         st.dataframe(opex_df, use_container_width=True)
-
     if personnel_base_df is not None:
         st.markdown("### Personnel Base")
         st.dataframe(personnel_base_df, use_container_width=True)
-
     if personnel_rules_df is not None:
         st.markdown("### Personnel Monthly Rules")
         st.dataframe(personnel_rules_df, use_container_width=True)
-
     if bom_df is not None:
         st.markdown("### BoM List")
         st.dataframe(bom_df, use_container_width=True)
-
     if product_capex_df is not None:
         st.markdown("### Product CapEx")
         st.dataframe(product_capex_df, use_container_width=True)
